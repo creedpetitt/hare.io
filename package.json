@@ -3,7 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "bin": {
+    "hare": "./src/server/cli.ts"
+  },
   "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -14,26 +21,26 @@
   "author": "",
   "license": "ISC",
   "type": "module",
-  "scripts": {
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
   "bugs": {
     "url": "https://github.com/Creed-Petitt/hare.io/issues"
   },
   "homepage": "https://github.com/Creed-Petitt/hare.io#readme",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.73.0",
+    "@inquirer/password": "^5.0.4",
+    "@inquirer/prompts": "^8.2.0",
+    "@inquirer/select": "^5.0.4",
+    "@types/turndown": "^5.0.6",
     "cheerio": "^1.2.0",
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.2.4",
     "express": "^5.2.1",
     "openai": "^6.17.0",
     "playwright": "^1.58.1",
     "tsx": "^4.21.0",
+    "turndown": "^7.2.2",
     "typescript": "^5.9.3",
-    "zod": "^4.3.6"
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
