@@ -60,7 +60,7 @@ export interface ToolResult {
   result: string;
 }
 
-export interface Tool<T extends z.ZodObject<any> = z.ZodObject<any>> {
+export interface Tool<T extends z.ZodObject<any>> {
   name: string;
   description: string;
   schema: T;
