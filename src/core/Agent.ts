@@ -20,7 +20,7 @@ export class Agent {
     this.compactor = new Compactor(llm);
     
     this.config = {
-      workspacePath: '',
+      workspacePath: undefined as any,
       model: 'gpt-4o',
       debug: false,
       compactionThreshold: 20,
