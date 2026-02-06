@@ -2,10 +2,21 @@ import { z } from 'zod';
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface Message {
   role: Role;
-  content: string;
+  content: string | null;
   name?: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
   timestamp: number;
 }
 
@@ -18,6 +29,14 @@ export interface BootstrapFiles {
   memory: string;
 }
 
+export type ToolProfile = 'minimal' | 'coding' | 'messaging' | 'full';
+
+export interface ToolConfig {
+  profile?: ToolProfile;
+  allow?: string[];
+  deny?: string[];
+}
+
 export interface AgentConfig {
   agentId: string;
   workspacePath: string;
@@ -25,6 +44,7 @@ export interface AgentConfig {
   debug: boolean;
   compactionThreshold: number;
   compactionKeep: number;
+  tools?: ToolConfig;
 }
 
 export interface AgentContext {
@@ -45,4 +65,5 @@ export interface Tool<T extends z.ZodObject<any> = z.ZodObject<any>> {
   description: string;
   schema: T;
   execute: (args: z.infer<T>, context: AgentContext) => Promise<ToolResult>;
+  getJsonSchema: () => object;
 }
