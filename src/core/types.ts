@@ -22,6 +22,8 @@ export interface AgentConfig {
   workspacePath: string;
   model: string;
   debug: boolean;
+  compactionThreshold: number;
+  compactionKeep: number;
 }
 
 export interface AgentContext {
