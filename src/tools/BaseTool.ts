@@ -10,7 +10,7 @@ export abstract class BaseTool<T extends z.ZodObject<any>> implements Tool<T> {
   abstract execute(args: z.infer<T>, context: AgentContext): Promise<ToolResult>;
 
   getJsonSchema(): object {
-    return zodToJsonSchema(this.schema as any);
+    return zodToJsonSchema(this.schema);
   }
 
   protected success(result: string): ToolResult {
