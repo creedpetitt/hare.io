@@ -15,6 +15,7 @@ export interface BootstrapFiles {
   tools: string;
   identity: string;
   user: string;
+  memory: string;
 }
 
 export interface AgentConfig {
@@ -27,6 +28,7 @@ export interface AgentContext {
   config: AgentConfig;
   history: Message[];
   files: BootstrapFiles;
+  summary: string;
 }
 
 export interface ToolResult {
