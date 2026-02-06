@@ -18,14 +18,16 @@ export class ContextBuilder {
   private workspaceDir: string;
   private sessionsDir: string;
 
-  constructor(baseDir: string = DEFAULT_CONFIG_DIR) {
+  constructor(baseDir: string = DEFAULT_CONFIG_DIR, agentId: string = 'main') {
     this.configDir = baseDir;
-    this.workspaceDir = path.join(baseDir, 'workspace');
-    this.sessionsDir = path.join(baseDir, 'sessions');
+    // ~/.hareio/agents/<agentId>/workspace
+    this.workspaceDir = path.join(baseDir, 'agents', agentId, 'workspace');
+    // ~/.hareio/agents/<agentId>/sessions
+    this.sessionsDir = path.join(baseDir, 'agents', agentId, 'sessions');
   }
 
   async init(): Promise<void> {
-    await fs.mkdir(this.configDir, { recursive: true });
+    // Ensure the deep structure exists
     await fs.mkdir(this.workspaceDir, { recursive: true });
     await fs.mkdir(this.sessionsDir, { recursive: true });
     await this.scaffoldDefaults();
@@ -123,6 +125,7 @@ export class ContextBuilder {
     const summary = await this.loadSummary(sessionId);
 
     const config: AgentConfig = {
+      agentId: 'main', // Default
       workspacePath: this.workspaceDir,
       model: 'gpt-4o',
       debug: false,

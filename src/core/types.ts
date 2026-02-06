@@ -19,6 +19,7 @@ export interface BootstrapFiles {
 }
 
 export interface AgentConfig {
+  agentId: string;
   workspacePath: string;
   model: string;
   debug: boolean;

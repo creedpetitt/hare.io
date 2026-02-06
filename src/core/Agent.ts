@@ -7,19 +7,21 @@ export class Agent {
   private llm: LLMProvider;
   private contextBuilder: ContextBuilder;
   private sessionId: string;
+  private agentId: string;
   private config: AgentConfig;
   private tools: Map<string, Tool> = new Map();
   private compactor: Compactor;
   private conversationSummary: string = '';
 
-  // Changed: Accepts LLMProvider instead of apiKey
-  constructor(sessionId: string, llm: LLMProvider, configOverride?: Partial<AgentConfig>) {
+  constructor(sessionId: string, llm: LLMProvider, agentId: string = 'main', configOverride?: Partial<AgentConfig>) {
     this.sessionId = sessionId;
     this.llm = llm;
-    this.contextBuilder = new ContextBuilder();
+    this.agentId = agentId;
+    this.contextBuilder = new ContextBuilder(undefined, agentId);
     this.compactor = new Compactor(llm);
     
     this.config = {
+      agentId,
       workspacePath: undefined as any,
       model: 'gpt-4o',
       debug: false,
@@ -119,8 +121,9 @@ export class Agent {
 
   async spawnSubAgent(task: string, parentSessionId: string): Promise<string> {
     const subSessionId = `${parentSessionId}-sub-${Date.now()}`;
-    // Pass the SAME LLM provider to the child
-    const subAgent = new Agent(subSessionId, this.llm, this.config);
+    // Pass the SAME LLM provider to the child, and same agentId (sub-agents share the brain)
+    // In future, we could spawn a different agentId (e.g. 'researcher')
+    const subAgent = new Agent(subSessionId, this.llm, this.agentId, this.config);
     return subAgent.run(task);
   }
 
