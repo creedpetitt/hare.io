@@ -1,7 +1,8 @@
 import { ContextBuilder } from './ContextBuilder.js';
-import { AgentConfig, AgentContext, Message, Tool } from './types.js';
-import { LLMProvider } from './llm/LLMProvider.js';
+import { AgentConfig, AgentContext, Message, Tool, ToolCall } from './types.js';
+import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
+import { ToolRegistry } from './ToolRegistry.js';
 
 export class Agent {
   private llm: LLMProvider;
@@ -9,125 +10,162 @@ export class Agent {
   private sessionId: string;
   private agentId: string;
   private config: AgentConfig;
-  private tools: Map<string, Tool> = new Map();
+  private tools: Tool<any>[] = [];
   private compactor: Compactor;
   private conversationSummary: string = '';
 
-  constructor(sessionId: string, llm: LLMProvider, agentId: string = 'main', configOverride?: Partial<AgentConfig>) {
+  constructor(
+    sessionId: string,
+    llm: LLMProvider,
+    agentId: string = 'main',
+    configOverride?: Partial<AgentConfig>
+  ) {
     this.sessionId = sessionId;
     this.llm = llm;
     this.agentId = agentId;
     this.contextBuilder = new ContextBuilder(undefined, agentId);
     this.compactor = new Compactor(llm);
-    
+
     this.config = {
       agentId,
-      workspacePath: undefined as any,
       model: 'gpt-4o',
       debug: false,
       compactionThreshold: 20,
       compactionKeep: 10,
       ...configOverride,
-    };
-  }
-
-  registerTool(tool: Tool) {
-    this.tools.set(tool.name, tool);
+    } as AgentConfig;
   }
 
   async run(userInput: string): Promise<string> {
+    const context = await this.prepareContext(userInput);
+    let finalAnswer = '';
+
+    while (true) {
+      const response = await this.llm.generate(
+        this.constructSystemPrompt(context),
+        context.history,
+        this.tools
+      );
+
+      await this.processAssistantResponse(response, context);
+
+      if (response.content) finalAnswer = response.content;
+      if (!response.toolCalls?.length) break;
+
+      await this.executeTools(response.toolCalls, context);
+    }
+
+    return finalAnswer;
+  }
+
+  private async prepareContext(userInput: string): Promise<AgentContext> {
     const context = await this.contextBuilder.build(this.sessionId, this.config);
-    this.config = context.config; 
-    
-    // Load summary from disk if we don't have one in memory yet
+    this.config = context.config;
+    this.tools = ToolRegistry.getTools(this.config.tools);
+
     if (!this.conversationSummary && context.summary) {
       this.conversationSummary = context.summary;
     }
 
-    // Check if compaction is needed
     if (context.history.length > this.config.compactionThreshold) {
-      const keepCount = this.config.compactionKeep;
-      const messagesToCompact = context.history.slice(0, -keepCount); 
-      
-      const result = await this.compactor.compact(messagesToCompact, this.conversationSummary);
-      this.conversationSummary = result.summary;
-      
-      // Save any new facts discovered during compaction
-      if (result.newFacts.length > 0) {
-        for (const fact of result.newFacts) {
-          if (this.config.debug) console.log(`[COMPACTION FACT] ${fact}`);
-          await this.contextBuilder.appendMemory(fact);
-        }
-      }
-
-      // Persist the new summary to disk
-      await this.contextBuilder.saveSummary(this.sessionId, this.conversationSummary);
-
-      // Move old messages to archive.jsonl and keep only the active ones in main.jsonl
-      const activeMessages = context.history.slice(-keepCount);
-      
-      await this.contextBuilder.archiveMessages(this.sessionId, messagesToCompact, activeMessages);
-      
-      // Keep only recent messages in history (memory)
-      context.history = activeMessages;
-      
-      if (this.config.debug) {
-        console.log('\n[COMPACTION] Summarized conversation history.');
-      }
+      await this.performCompaction(context);
     }
 
-    const userMsg: Message = {
-      role: 'user',
-      content: userInput,
-      timestamp: Date.now(),
-    };
+    const userMsg: Message = { role: 'user', content: userInput, timestamp: Date.now() };
     await this.contextBuilder.appendMessage(this.sessionId, userMsg);
     context.history.push(userMsg);
 
-    const systemPrompt = this.constructSystemPrompt(context);
+    return context;
+  }
 
-    let answer = await this.llm.generate(systemPrompt, context.history);
+  private async performCompaction(context: AgentContext) {
+    const keepCount = this.config.compactionKeep;
+    const toCompact = context.history.slice(0, -keepCount);
 
-    // Check for memory protocol: [[MEMORY: fact]]
-    const memoryPattern = /\[\[MEMORY:\s*(.+?)\]\]/g;
-    let match;
-    const memoriesToSave: string[] = [];
-    
-    while ((match = memoryPattern.exec(answer)) !== null) {
-      memoriesToSave.push(match[1]);
+    const result = await this.compactor.compact(toCompact, this.conversationSummary);
+    this.conversationSummary = result.summary;
+
+    for (const fact of result.newFacts) {
+      await this.contextBuilder.appendMemory(fact);
     }
 
-    // Save memories and remove protocol from response
-    if (memoriesToSave.length > 0) {
-      for (const memory of memoriesToSave) {
-        await this.contextBuilder.appendMemory(memory);
-        if (this.config.debug) {
-          console.log(`\n[MEMORY SAVED] ${memory}`);
-        }
-      }
-      // Remove memory tags from the response
-      answer = answer.replace(memoryPattern, '').trim();
+    await this.contextBuilder.saveSummary(this.sessionId, this.conversationSummary);
+    const active = context.history.slice(-keepCount);
+    await this.contextBuilder.archiveMessages(this.sessionId, toCompact, active);
+    context.history = active;
+  }
+
+  private async processAssistantResponse(response: LLMResponse, context: AgentContext) {
+    let content = response.content;
+
+    if (content) {
+      content = await this.extractAndSaveMemories(content);
     }
 
     const assistantMsg: Message = {
       role: 'assistant',
-      content: answer,
+      content,
+      tool_calls: response.toolCalls,
       timestamp: Date.now(),
     };
-    await this.contextBuilder.appendMessage(this.sessionId, assistantMsg);
 
-    return answer;
+    await this.contextBuilder.appendMessage(this.sessionId, assistantMsg);
+    context.history.push(assistantMsg);
   }
 
-  async spawnSubAgent(task: string, parentSessionId: string): Promise<string> {
-    const subSessionId = `${parentSessionId}-sub-${Date.now()}`;
-    // Pass the SAME LLM provider to the child, and same agentId (sub-agents share the brain)
-    // In future, we could spawn a different agentId (e.g. 'researcher')
-    const subAgent = new Agent(subSessionId, this.llm, this.agentId, this.config);
-    return subAgent.run(task);
+  private async executeTools(toolCalls: ToolCall[], context: AgentContext) {
+    for (const tc of toolCalls) {
+      const tool = this.tools.find((t) => t.name.toLowerCase() === tc.function.name.toLowerCase());
+      let resultStr: string;
+
+      if (!tool) {
+        resultStr = `Error: Tool ${tc.function.name} not found.`;
+      } else {
+        try {
+          const args = JSON.parse(tc.function.arguments);
+          if (this.config.debug) console.log(`[TOOL CALL] ${tool.name}(${tc.function.arguments})`);
+
+          // Execution is now type-safe!
+          // Even though 'tool' is Tool<any>, zod inside the tool
+          // will validate 'args' during the internal execute call.
+          const execution = await tool.execute(args, context);
+          resultStr = execution.result;
+
+          if (this.config.debug) console.log(`[TOOL RESULT] ${resultStr}`);
+        } catch (e: any) {
+          resultStr = `Error: ${e.message}`;
+        }
+      }
+
+      const toolMsg: Message = {
+        role: 'tool',
+        name: tc.function.name,
+        tool_call_id: tc.id,
+        content: resultStr,
+        timestamp: Date.now(),
+      };
+
+      await this.contextBuilder.appendMessage(this.sessionId, toolMsg);
+      context.history.push(toolMsg);
+    }
+  }
+
+  private async extractAndSaveMemories(content: string): Promise<string> {
+    const memoryPattern = /\[\[MEMORY:\s*(.+?)\]\]/g;
+    let match;
+    while ((match = memoryPattern.exec(content)) !== null) {
+      await this.contextBuilder.appendMemory(match[1]);
+      if (this.config.debug) console.log(`[MEMORY] ${match[1]}`);
+    }
+    return content.replace(memoryPattern, '').trim();
   }
 
   private constructSystemPrompt(context: AgentContext): string {
+    const toolsPrompt =
+      this.tools.length > 0
+        ? this.tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
+        : 'No tools available.';
+
     const parts = [
       '=== IDENTITY ===',
       context.files.identity,
@@ -145,21 +183,14 @@ export class Agent {
       context.files.memory,
       '',
       '=== MEMORY PROTOCOL ===',
-      'To save a permanent fact about the user or conversation, use the format: [[MEMORY: fact]]',
-      'Example: [[MEMORY: User\'s name is Creed]]',
-      'The memory will be saved automatically and persist across sessions.',
+      'To save a permanent fact, use: [[MEMORY: fact]]',
       '',
       '=== AVAILABLE TOOLS ===',
-      context.files.tools,
-      '(Note: Functional tool access is strictly controlled by the runtime.)',
+      toolsPrompt,
     ];
 
     if (this.conversationSummary) {
-      parts.unshift(
-        '=== CONVERSATION SUMMARY ===',
-        this.conversationSummary,
-        ''
-      );
+      parts.unshift('=== CONVERSATION SUMMARY ===', this.conversationSummary, '');
     }
 
     return parts.join('\n').trim();
