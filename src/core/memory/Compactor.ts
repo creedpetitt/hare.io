@@ -1,4 +1,4 @@
-import { LLMProvider } from '../llm/LLMProvider.js';
+import { LLMProvider, LLMResponse } from '../llm/LLMProvider.js';
 import { Message } from '../types.js';
 
 export interface CompactionResult {
@@ -49,7 +49,8 @@ ${prevSummary ? `=== PREVIOUS SUMMARY ===\n${prevSummary}\n` : ''}
     return this.parseResponse(response);
   }
 
-  private parseResponse(text: string): CompactionResult {
+  private parseResponse(response: LLMResponse): CompactionResult {
+    const text = response.content || '';
     const summaryMarker = '---SUMMARY---';
     const factsMarker = '---FACTS---';
 
