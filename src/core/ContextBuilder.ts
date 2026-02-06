@@ -74,7 +74,8 @@ export class ContextBuilder {
       .map((line) => {
         try {
           return JSON.parse(line) as Message;
-        } catch {
+        } catch (e) {
+          console.error(`[ContextBuilder] Warning: Dropping corrupt log line: "${line}"`, e);
           return null;
         }
       })
