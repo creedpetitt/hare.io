@@ -11,19 +11,23 @@ export class OpenAIProvider implements LLMProvider {
     this.model = model;
   }
 
-  async generate(systemPrompt: string, history: Message[], tools?: Tool[]): Promise<LLMResponse> {
+  async generate(
+    systemPrompt: string,
+    history: Message[],
+    tools?: Tool<any>[]
+  ): Promise<LLMResponse> {
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...history.map(m => this.mapMessage(m)),
+      ...history.map((m) => this.mapMessage(m)),
     ];
 
-    const openAITools = tools?.map(t => ({
+    const openAITools = tools?.map((t) => ({
       type: 'function' as const,
       function: {
         name: t.name,
         description: t.description,
         parameters: t.getJsonSchema() as any,
-      }
+      },
     }));
 
     const response = await this.openai.chat.completions.create({

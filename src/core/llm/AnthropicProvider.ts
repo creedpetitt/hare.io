@@ -11,10 +11,14 @@ export class AnthropicProvider implements LLMProvider {
     this.model = model;
   }
 
-  async generate(systemPrompt: string, history: Message[], tools?: Tool[]): Promise<LLMResponse> {
-    const messages = history.map(m => this.mapMessage(m));
+  async generate(
+    systemPrompt: string,
+    history: Message[],
+    tools?: Tool<any>[]
+  ): Promise<LLMResponse> {
+    const messages = history.map((m) => this.mapMessage(m));
 
-    const anthropicTools = tools?.map(t => ({
+    const anthropicTools = tools?.map((t) => ({
       name: t.name,
       description: t.description,
       input_schema: t.getJsonSchema() as any,
@@ -42,7 +46,7 @@ export class AnthropicProvider implements LLMProvider {
     if (m.tool_calls) {
       return {
         role: 'assistant',
-        content: m.tool_calls.map(tc => ({
+        content: m.tool_calls.map((tc) => ({
           type: 'tool_use',
           id: tc.id,
           name: tc.function.name,
