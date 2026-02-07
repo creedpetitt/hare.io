@@ -231,6 +231,20 @@ async function start() {
   const app = await buildServer();
   const port = Number(process.env.GATEWAY_PORT) || DEFAULT_PORT;
   await app.listen({ port, host: '127.0.0.1' });
+
+  const shutdown = async (signal: string) => {
+    try {
+      app.log.info({ signal }, 'Gateway shutting down');
+      await app.close();
+      process.exit(0);
+    } catch (error) {
+      app.log.error({ error, signal }, 'Gateway shutdown failed');
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 start();
