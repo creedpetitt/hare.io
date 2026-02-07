@@ -39,6 +39,124 @@ const AGENT_TIMEOUT_MS = 120_000;
 const REQUEST_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
 const IDEMPOTENCY_TTL_MS = 120_000;
+const STREAM_FLUSH_INTERVAL_MS = 30;
+const STREAM_MAX_DELTA_CHARS = 8_000;
+const STREAM_BACKPRESSURE_LIMIT_BYTES = 1_000_000;
+const STREAM_BACKPRESSURE_RETRY_MS = 60;
+const STREAM_MAX_BACKPRESSURE_CHARS = 20_000;
+const SOCKET_OPEN_STATE = 1;
+
+type StreamState = {
+  buffer: string;
+  lastIndex: number;
+  timer?: NodeJS.Timeout;
+  retryTimer?: NodeJS.Timeout;
+  backpressure: boolean;
+};
+
+type StreamEmitter = {
+  enqueue: (runId: string, delta: string, index: number) => void;
+  finalize: (runId: string) => void;
+  shutdown: () => void;
+};
+
+function createStreamEmitter(socket: WebSocket): StreamEmitter {
+  const streams = new Map<string, StreamState>();
+
+  const canSend = () =>
+    socket.readyState === SOCKET_OPEN_STATE &&
+    socket.bufferedAmount < STREAM_BACKPRESSURE_LIMIT_BYTES;
+
+  const getState = (runId: string) => {
+    const existing = streams.get(runId);
+    if (existing) return existing;
+    const created: StreamState = { buffer: '', lastIndex: 0, backpressure: false };
+    streams.set(runId, created);
+    return created;
+  };
+
+  const flush = (runId: string) => {
+    const state = streams.get(runId);
+    if (!state || !state.buffer) return;
+    if (!canSend()) {
+      state.backpressure = true;
+      scheduleRetry(runId, state);
+      return;
+    }
+
+    state.backpressure = false;
+    const payload: AgentStreamEventPayload = {
+      runId,
+      delta: state.buffer,
+      index: state.lastIndex,
+    };
+    state.buffer = '';
+    sendEvent(socket, 'agent.stream', payload);
+  };
+
+  const scheduleFlush = (runId: string, state: StreamState) => {
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      flush(runId);
+    }, STREAM_FLUSH_INTERVAL_MS);
+  };
+
+  const scheduleRetry = (runId: string, state: StreamState) => {
+    if (state.retryTimer) return;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = undefined;
+      flush(runId);
+    }, STREAM_BACKPRESSURE_RETRY_MS);
+  };
+
+  const enqueue = (runId: string, delta: string, index: number) => {
+    if (!delta) return;
+    const state = getState(runId);
+    state.lastIndex = index;
+
+    if (state.backpressure) {
+      const next = `${state.buffer}${delta}`;
+      state.buffer = next.slice(-STREAM_MAX_BACKPRESSURE_CHARS);
+      scheduleRetry(runId, state);
+      return;
+    }
+
+    state.buffer += delta;
+    if (state.buffer.length >= STREAM_MAX_DELTA_CHARS) {
+      flush(runId);
+    } else {
+      scheduleFlush(runId, state);
+    }
+  };
+
+  const finalize = (runId: string) => {
+    const state = streams.get(runId);
+    if (!state) return;
+
+    if (state.timer) clearTimeout(state.timer);
+    if (state.retryTimer) clearTimeout(state.retryTimer);
+
+    if (state.buffer && canSend()) {
+      const payload: AgentStreamEventPayload = {
+        runId,
+        delta: state.buffer,
+        index: state.lastIndex,
+      };
+      sendEvent(socket, 'agent.stream', payload);
+    }
+
+    streams.delete(runId);
+  };
+
+  const shutdown = () => {
+    for (const runId of streams.keys()) {
+      finalize(runId);
+    }
+  };
+
+  return { enqueue, finalize, shutdown };
+}
 
 async function buildServer() {
   const app = Fastify({ logger: true });
@@ -54,20 +172,27 @@ async function buildServer() {
       windowStartMs: Date.now(),
       idempotencyCache: new Map(),
     };
+    const streamEmitter = createStreamEmitter(socket);
 
     socket.on('message', async (raw: Buffer) => {
-      await handleMessage(raw, socket, state);
+      await handleMessage(raw, socket, state, streamEmitter);
     });
 
     socket.on('close', () => {
       state.connected = false;
+      streamEmitter.shutdown();
     });
   });
 
   return app;
 }
 
-async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionState) {
+async function handleMessage(
+  raw: Buffer,
+  socket: WebSocket,
+  state: ConnectionState,
+  streamEmitter: StreamEmitter
+) {
   if (!recordRequest(state)) {
     sendError(socket, 'rate_limited', 'Too many requests. Slow down.');
     return;
@@ -167,7 +292,7 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
   }
 
   if (request.method === 'agent') {
-    void handleAgentRequest(socket, state, request);
+    void handleAgentRequest(socket, state, request, streamEmitter);
     return;
   }
 
@@ -207,7 +332,8 @@ function recordRequest(state: ConnectionState): boolean {
 async function handleAgentRequest(
   socket: WebSocket,
   state: ConnectionState,
-  request: AgentRequest
+  request: AgentRequest,
+  streamEmitter: StreamEmitter
 ) {
   const runId = crypto.randomUUID();
   const queuedAt = Date.now();
@@ -276,7 +402,7 @@ async function handleAgentRequest(
           },
           assistantObserver: {
             onAssistantDelta: (assistantRunId, delta, index) =>
-              emitAgentStream(socket, { runId: assistantRunId, delta, index }),
+              streamEmitter.enqueue(assistantRunId, delta, index),
           },
         }
       );
@@ -284,6 +410,7 @@ async function handleAgentRequest(
       try {
         const result = await runWithTimeout(agent.run(params.input), AGENT_TIMEOUT_MS);
         const endedAt = Date.now();
+        streamEmitter.finalize(runId);
         emitAgentLifecycle(socket, {
           runId,
           sessionId,
@@ -306,6 +433,7 @@ async function handleAgentRequest(
           code: error?.code || 'agent_error',
           message: error?.message || 'Agent run failed',
         };
+        streamEmitter.finalize(runId);
         emitAgentLifecycle(socket, {
           runId,
           sessionId,
@@ -345,10 +473,6 @@ async function handleAgentRequest(
 
 function emitAgentLifecycle(socket: WebSocket, payload: AgentLifecycleEventPayload) {
   sendEvent(socket, 'agent.lifecycle', payload);
-}
-
-function emitAgentStream(socket: WebSocket, payload: AgentStreamEventPayload) {
-  sendEvent(socket, 'agent.stream', payload);
 }
 
 function emitToolStream(socket: WebSocket, payload: ToolStreamEventPayload) {

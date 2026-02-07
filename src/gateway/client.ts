@@ -27,8 +27,9 @@ export class GatewayClient {
   private clientPlatform: string;
   private clientMode: string;
   private scopes: string[];
+  private onStream?: (delta: string) => void;
 
-  constructor(options: GatewayClientOptions) {
+  constructor(options: GatewayClientOptions & { onStream?: (delta: string) => void }) {
     this.url = options.url;
     this.token = options.token;
     this.clientId = options.clientId || 'cli';
@@ -36,6 +37,7 @@ export class GatewayClient {
     this.clientPlatform = options.clientPlatform || process.platform;
     this.clientMode = options.clientMode || 'operator';
     this.scopes = options.scopes || ['operator.read', 'operator.write'];
+    this.onStream = options.onStream;
   }
 
   async runAgent(params: AgentParams): Promise<string> {
@@ -57,6 +59,10 @@ export class GatewayClient {
         params,
       });
 
+      if (this.onStream) {
+        this.listenForStreamEvents(socket, requestId);
+      }
+
       let accepted = false;
       while (true) {
         const response = await this.waitForResponse(socket, requestId);
@@ -75,11 +81,18 @@ export class GatewayClient {
         }
 
         if (payload.status === 'ok') {
+          if (!accepted) {
+            throw new Error('Agent run ended without acceptance.');
+          }
           return payload.summary;
         }
 
         if (payload.status === 'error') {
           throw new Error(payload.error?.message || 'Agent run failed.');
+        }
+
+        if (payload.status === 'cancelled') {
+          throw new Error(payload.error?.message || 'Agent run cancelled.');
         }
       }
     } finally {
@@ -147,5 +160,31 @@ export class GatewayClient {
       socket.on('message', onMessage);
       socket.on('error', onError);
     });
+  }
+
+  private listenForStreamEvents(socket: WebSocket, requestId: string) {
+    const onMessage = (raw: Buffer) => {
+      let parsed: GatewayFrame;
+      try {
+        parsed = JSON.parse(raw.toString()) as GatewayFrame;
+      } catch {
+        return;
+      }
+
+      if (parsed.type === 'event' && parsed.event === 'agent.stream') {
+        const delta = (parsed.payload as { delta?: string } | undefined)?.delta;
+        if (delta) this.onStream?.(delta);
+      }
+
+      if (parsed.type === 'res' && parsed.id === requestId) {
+        const payload = parsed.payload as AgentAcceptedPayload | AgentFinalPayload | undefined;
+        if (payload && 'status' in payload && payload.status === 'accepted') {
+          return;
+        }
+        socket.off('message', onMessage);
+      }
+    };
+
+    socket.on('message', onMessage);
   }
 }
