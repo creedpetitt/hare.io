@@ -6,23 +6,29 @@ import {
   GatewayFrame,
   GatewayRequest,
   GatewayResponse,
-  GatewayEvent,
   type AgentRequest,
+  type AgentLifecycleEventPayload,
+  type AgentStreamEventPayload,
+  type ToolStreamEventPayload,
   isGatewayFrame,
   isConnectRequest,
-  isAgentRequest,
-  isConnectParams,
-  isAgentParams,
   PROTOCOL_VERSION,
+  parseGatewayRequest,
 } from './protocol.js';
 import { getGatewayToken, validateToken } from './auth.js';
 import { Agent } from '../core/Agent.js';
+import { loadConfig } from '../core/config.js';
 import { getConfiguredLLM } from '../core/llm/getLLM.js';
+import { getOrCreateSessionLane } from './sessionLanes.js';
+import { registerActiveRun, updateActiveRunStart, removeActiveRun, cancelRun } from './runs.js';
+import { readIdempotency, storeIdempotency } from './idempotency.js';
+import { buildResponse, sendResponse, sendEvent, sendError } from './responses.js';
 
 type ConnectionState = {
   connected: boolean;
   requestCount: number;
   windowStartMs: number;
+  idempotencyCache: Map<string, { response: GatewayResponse; expiresAt: number }>;
 };
 
 const DEFAULT_PORT = 18789;
@@ -32,6 +38,7 @@ const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
 const AGENT_TIMEOUT_MS = 120_000;
 const REQUEST_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
+const IDEMPOTENCY_TTL_MS = 120_000;
 
 async function buildServer() {
   const app = Fastify({ logger: true });
@@ -45,6 +52,7 @@ async function buildServer() {
       connected: false,
       requestCount: 0,
       windowStartMs: Date.now(),
+      idempotencyCache: new Map(),
     };
 
     socket.on('message', async (raw: Buffer) => {
@@ -82,31 +90,42 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
     return;
   }
 
-  const request = parsed as GatewayRequest;
+  const parsedRequest = parseGatewayRequest(parsed);
+  if (!parsedRequest.ok) {
+    sendResponse(socket, buildResponse('error', false, undefined, parsedRequest.error));
+    return;
+  }
+
+  const request = parsedRequest.request as GatewayRequest;
+
+  if (request.idempotencyKey) {
+    const cached = readIdempotency(state, request.idempotencyKey);
+    if (cached) {
+      socket.send(JSON.stringify(cached));
+      return;
+    }
+  }
 
   if (!state.connected) {
     if (!isConnectRequest(request)) {
-      sendResponse(socket, request.id, false, undefined, {
-        code: 'not_connected',
-        message: 'First request must be connect',
-      });
-      return;
-    }
-
-    if (!isConnectParams(request.params)) {
-      sendResponse(socket, request.id, false, undefined, {
-        code: 'invalid_request',
-        message: 'Invalid connect params',
-      });
-      socket.close();
+      sendResponse(
+        socket,
+        buildResponse(request.id, false, undefined, {
+          code: 'not_connected',
+          message: 'First request must be connect',
+        })
+      );
       return;
     }
 
     if (!isProtocolCompatible(request.params.minProtocol, request.params.maxProtocol)) {
-      sendResponse(socket, request.id, false, undefined, {
-        code: 'protocol_mismatch',
-        message: `Unsupported protocol version. Server=${PROTOCOL_VERSION}`,
-      });
+      sendResponse(
+        socket,
+        buildResponse(request.id, false, undefined, {
+          code: 'protocol_mismatch',
+          message: `Unsupported protocol version. Server=${PROTOCOL_VERSION}`,
+        })
+      );
       socket.close();
       return;
     }
@@ -114,16 +133,19 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
     const expectedToken = await getGatewayToken();
     const providedToken = request.params.auth?.token;
     if (!validateToken(expectedToken, providedToken)) {
-      sendResponse(socket, request.id, false, undefined, {
-        code: 'unauthorized',
-        message: 'Invalid gateway token',
-      });
+      sendResponse(
+        socket,
+        buildResponse(request.id, false, undefined, {
+          code: 'unauthorized',
+          message: 'Invalid gateway token',
+        })
+      );
       socket.close();
       return;
     }
 
     state.connected = true;
-    sendResponse(socket, request.id, true, {
+    const response = buildResponse(request.id, true, {
       type: 'hello-ok',
       protocol: PROTOCOL_VERSION,
       policy: {
@@ -132,31 +154,43 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
         maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
       },
     });
+    sendResponse(socket, response);
+    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
     return;
   }
 
   if (request.method === 'ping') {
-    sendResponse(socket, request.id, true, { type: 'pong' });
+    const response = buildResponse(request.id, true, { type: 'pong' });
+    sendResponse(socket, response);
+    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
     return;
   }
 
   if (request.method === 'agent') {
-    if (!isAgentRequest(request) || !isAgentParams(request.params)) {
-      sendResponse(socket, request.id, false, undefined, {
-        code: 'invalid_request',
-        message: 'Invalid agent params',
-      });
-      return;
-    }
-
-    void handleAgentRequest(socket, request);
+    void handleAgentRequest(socket, state, request);
     return;
   }
 
-  sendResponse(socket, request.id, false, undefined, {
-    code: 'unknown_method',
-    message: `Unknown method: ${request.method}`,
-  });
+  if (request.method === 'cancel') {
+    const runId = request.params.runId;
+    const cancelled = cancelRun(runId);
+    const response = buildResponse(request.id, true, {
+      runId,
+      status: cancelled ? 'cancelled' : 'not_found',
+      reason: request.params.reason,
+    });
+    sendResponse(socket, response);
+    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+    return;
+  }
+
+  sendResponse(
+    socket,
+    buildResponse(request.id, false, undefined, {
+      code: 'unknown_method',
+      message: `Unknown method: ${request.method}`,
+    })
+  );
 }
 
 function recordRequest(state: ConnectionState): boolean {
@@ -170,9 +204,16 @@ function recordRequest(state: ConnectionState): boolean {
   return state.requestCount <= MAX_REQUESTS_PER_WINDOW;
 }
 
-async function handleAgentRequest(socket: WebSocket, request: AgentRequest) {
+async function handleAgentRequest(
+  socket: WebSocket,
+  state: ConnectionState,
+  request: AgentRequest
+) {
   const runId = crypto.randomUUID();
-  sendResponse(socket, request.id, true, { runId, status: 'accepted' });
+  const queuedAt = Date.now();
+  const accepted = buildResponse(request.id, true, { runId, status: 'accepted' });
+  sendResponse(socket, accepted);
+  storeIdempotency(state, request.idempotencyKey, accepted, IDEMPOTENCY_TTL_MS);
 
   try {
     const params = request.params;
@@ -180,18 +221,116 @@ async function handleAgentRequest(socket: WebSocket, request: AgentRequest) {
       errorCode: 'unconfigured',
       errorMessage: 'No API Key configured for OpenAI or Anthropic.',
     });
+    const config = await loadConfig();
     const sessionId = params.sessionId || 'main';
     const agentId = params.agentId || 'main';
-    const agent = new Agent(sessionId, llm, agentId, {
-      model,
-      debug: process.env.DEBUG === 'true',
-      tools: params.profile ? { profile: params.profile as any } : undefined,
-    });
+    const activeRun = registerActiveRun({ runId, sessionId, agentId, queuedAt });
 
-    const result = await runWithTimeout(agent.run(params.input), AGENT_TIMEOUT_MS);
-    sendResponse(socket, request.id, true, { runId, status: 'ok', summary: result });
+    await getOrCreateSessionLane(sessionId).enqueue(async () => {
+      const startedAt = Date.now();
+      updateActiveRunStart(runId, startedAt);
+      emitAgentLifecycle(socket, {
+        runId,
+        sessionId,
+        agentId,
+        phase: 'start',
+        queuedAt,
+        startedAt,
+      });
+
+      const agent = new Agent(
+        sessionId,
+        llm,
+        agentId,
+        {
+          model,
+          debug: process.env.DEBUG === 'true',
+          tools: params.profile ? { profile: params.profile as any } : undefined,
+          bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
+        },
+        {
+          runId,
+          abortSignal: activeRun.abortController.signal,
+          toolObserver: {
+            onToolStart: (toolRunId, toolName, input) =>
+              emitToolStream(socket, {
+                runId: toolRunId,
+                toolName,
+                phase: 'start',
+                input,
+              }),
+            onToolEnd: (toolRunId, toolName, output) =>
+              emitToolStream(socket, {
+                runId: toolRunId,
+                toolName,
+                phase: 'end',
+                output,
+              }),
+            onToolError: (toolRunId, toolName, error) =>
+              emitToolStream(socket, {
+                runId: toolRunId,
+                toolName,
+                phase: 'error',
+                error,
+              }),
+          },
+          assistantObserver: {
+            onAssistantDelta: (assistantRunId, delta, index) =>
+              emitAgentStream(socket, { runId: assistantRunId, delta, index }),
+          },
+        }
+      );
+
+      try {
+        const result = await runWithTimeout(agent.run(params.input), AGENT_TIMEOUT_MS);
+        const endedAt = Date.now();
+        emitAgentLifecycle(socket, {
+          runId,
+          sessionId,
+          agentId,
+          phase: 'end',
+          status: 'ok',
+          queuedAt,
+          startedAt,
+          endedAt,
+          summary: result,
+        });
+
+        const response = buildResponse(request.id, true, { runId, status: 'ok', summary: result });
+        sendResponse(socket, response);
+        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+      } catch (error: any) {
+        const endedAt = Date.now();
+        const isCancelled = error?.code === 'agent_cancelled';
+        const errorPayload = {
+          code: error?.code || 'agent_error',
+          message: error?.message || 'Agent run failed',
+        };
+        emitAgentLifecycle(socket, {
+          runId,
+          sessionId,
+          agentId,
+          phase: 'error',
+          status: isCancelled ? 'cancelled' : 'error',
+          queuedAt,
+          startedAt,
+          endedAt,
+          error: errorPayload,
+        });
+
+        const response = buildResponse(request.id, true, {
+          runId,
+          status: isCancelled ? 'cancelled' : 'error',
+          error: errorPayload,
+        });
+        sendResponse(socket, response);
+        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+      } finally {
+        removeActiveRun(runId);
+      }
+    });
   } catch (error: any) {
-    sendResponse(socket, request.id, true, {
+    const response = buildResponse(request.id, true, {
       runId,
       status: 'error',
       error: {
@@ -199,33 +338,21 @@ async function handleAgentRequest(socket: WebSocket, request: AgentRequest) {
         message: error?.message || 'Agent run failed',
       },
     });
+    sendResponse(socket, response);
+    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
   }
 }
 
-function sendResponse(
-  socket: WebSocket,
-  id: string,
-  ok: boolean,
-  payload?: GatewayResponse['payload'],
-  error?: GatewayResponse['error']
-) {
-  const frame: GatewayResponse = { type: 'res', id, ok, payload, error };
-  socket.send(JSON.stringify(frame));
+function emitAgentLifecycle(socket: WebSocket, payload: AgentLifecycleEventPayload) {
+  sendEvent(socket, 'agent.lifecycle', payload);
 }
 
-function sendEvent(socket: WebSocket, event: string, payload?: GatewayEvent['payload']) {
-  const frame: GatewayEvent = { type: 'event', event, payload };
-  socket.send(JSON.stringify(frame));
+function emitAgentStream(socket: WebSocket, payload: AgentStreamEventPayload) {
+  sendEvent(socket, 'agent.stream', payload);
 }
 
-function sendError(socket: WebSocket, code: string, message: string) {
-  const frame: GatewayResponse = {
-    type: 'res',
-    id: 'error',
-    ok: false,
-    error: { code, message },
-  };
-  socket.send(JSON.stringify(frame));
+function emitToolStream(socket: WebSocket, payload: ToolStreamEventPayload) {
+  sendEvent(socket, 'agent.tool', payload);
 }
 
 function isProtocolCompatible(minProtocol: number, maxProtocol: number): boolean {
