@@ -1,5 +1,13 @@
 import { ContextBuilder } from './ContextBuilder.js';
-import { AgentConfig, AgentContext, Message, Tool, ToolCall } from './types.js';
+import {
+  AgentConfig,
+  AgentContext,
+  Message,
+  Tool,
+  ToolCall,
+  ToolPolicy,
+  ToolResult,
+} from './types.js';
 import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
 import { ToolRegistry } from './ToolRegistry.js';
@@ -32,6 +40,12 @@ export class Agent {
       debug: false,
       compactionThreshold: 20,
       compactionKeep: 10,
+      toolPolicy: {
+        defaults: {
+          timeoutMs: 30_000,
+          maxResultBytes: 1_000_000,
+        },
+      },
       ...configOverride,
     } as AgentConfig;
   }
@@ -114,12 +128,18 @@ export class Agent {
   }
 
   private async executeTools(toolCalls: ToolCall[], context: AgentContext) {
+    const policyConfig = context.config.tools?.policy ?? context.config.toolPolicy;
     for (const tc of toolCalls) {
       const tool = this.tools.find((t) => t.name.toLowerCase() === tc.function.name.toLowerCase());
-      let resultStr: string;
+      let result: ToolResult;
 
       if (!tool) {
-        resultStr = `Error: Tool ${tc.function.name} not found.`;
+        result = {
+          toolName: tc.function.name,
+          success: false,
+          result: `Error: Tool ${tc.function.name} not found.`,
+          error: { code: 'tool_not_found', message: `Tool ${tc.function.name} not found.` },
+        };
       } else {
         try {
           const args = JSON.parse(tc.function.arguments);
@@ -128,12 +148,34 @@ export class Agent {
           // Execution is now type-safe!
           // Even though 'tool' is Tool<any>, zod inside the tool
           // will validate 'args' during the internal execute call.
-          const execution = await tool.execute(args, context);
-          resultStr = execution.result;
+          const effectivePolicy = this.resolveToolPolicy(tool.name, policyConfig);
+          const execution = await runWithTimeout(
+            tool.execute(args, context),
+            effectivePolicy.timeoutMs
+          );
+          result = this.enforceResultLimits(execution, effectivePolicy);
 
-          if (this.config.debug) console.log(`[TOOL RESULT] ${resultStr}`);
+          if (!result.success && !result.error) {
+            result = {
+              ...result,
+              error: { code: 'tool_error', message: result.result },
+            };
+          }
+
+          if (this.config.debug) {
+            const status = result.success ? 'ok' : 'error';
+            const code = result.error?.code ? ` ${result.error.code}` : '';
+            console.log(`[TOOL RESULT] ${status}${code}`);
+          }
         } catch (e: any) {
-          resultStr = `Error: ${e.message}`;
+          const code = e?.code || 'tool_exception';
+          const message = e?.message || 'Tool execution failed.';
+          result = {
+            toolName: tool.name,
+            success: false,
+            result: `Error: ${message}`,
+            error: { code, message },
+          };
         }
       }
 
@@ -141,7 +183,7 @@ export class Agent {
         role: 'tool',
         name: tc.function.name,
         tool_call_id: tc.id,
-        content: resultStr,
+        content: this.serializeToolResult(result),
         timestamp: Date.now(),
       };
 
@@ -185,6 +227,10 @@ export class Agent {
       '=== MEMORY PROTOCOL ===',
       'To save a permanent fact, use: [[MEMORY: fact]]',
       '',
+      '=== TOOL RESPONSE FORMAT ===',
+      'Tool responses are JSON with fields: toolName, success, result, error.',
+      'error is null or { code, message, details }.',
+      '',
       '=== AVAILABLE TOOLS ===',
       toolsPrompt,
     ];
@@ -194,5 +240,78 @@ export class Agent {
     }
 
     return parts.join('\n').trim();
+  }
+
+  private resolveToolPolicy(
+    toolName: string,
+    policyConfig?: AgentConfig['toolPolicy']
+  ): ToolPolicy {
+    const defaults = policyConfig?.defaults || {};
+    const specific = policyConfig?.byTool?.[toolName.toLowerCase()] || {};
+    return {
+      timeoutMs: 30_000,
+      maxResultBytes: 1_000_000,
+      ...defaults,
+      ...specific,
+    };
+  }
+
+  private enforceResultLimits(result: ToolResult, policy: ToolPolicy): ToolResult {
+    if (policy.maxResultBytes && result.result) {
+      const bytes = Buffer.byteLength(result.result, 'utf8');
+      if (bytes > policy.maxResultBytes) {
+        const truncated = truncateToBytes(result.result, policy.maxResultBytes);
+        return {
+          toolName: result.toolName,
+          success: false,
+          result: truncated,
+          error: {
+            code: 'tool_result_too_large',
+            message: `Tool result exceeded ${policy.maxResultBytes} bytes.`,
+            details: {
+              limitBytes: policy.maxResultBytes,
+              actualBytes: bytes,
+              truncated: true,
+            },
+          },
+        };
+      }
+    }
+
+    return result;
+  }
+
+  private serializeToolResult(result: ToolResult): string {
+    return JSON.stringify({
+      toolName: result.toolName,
+      success: result.success,
+      result: result.result,
+      error: result.error ?? null,
+    });
+  }
+}
+
+function truncateToBytes(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, 'utf8');
+  if (buffer.length <= maxBytes) return value;
+  return buffer.subarray(0, maxBytes).toString('utf8');
+}
+
+async function runWithTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err: any = new Error('Tool execution timed out.');
+      err.code = 'tool_timeout';
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }

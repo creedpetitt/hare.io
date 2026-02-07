@@ -1,4 +1,4 @@
-import { Tool, ToolConfig, ToolProfile } from './types.js';
+import { Tool, ToolConfig, ToolPolicy, ToolPolicyConfig, ToolProfile } from './types.js';
 import { ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool } from '../tools/fs.js';
 
 export class ToolRegistry {
@@ -66,6 +66,12 @@ export class ToolRegistry {
     }
 
     return result;
+  }
+
+  static getToolPolicy(toolName: string, config?: ToolPolicyConfig): ToolPolicy | undefined {
+    if (!config) return undefined;
+    const normalized = toolName.toLowerCase();
+    return config.byTool?.[normalized] || config.defaults;
   }
 
   private static expandItems(items: string[]): string[] {

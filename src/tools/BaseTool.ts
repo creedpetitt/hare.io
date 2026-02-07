@@ -21,11 +21,16 @@ export abstract class BaseTool<T extends z.ZodObject<any>> implements Tool<T> {
     };
   }
 
-  protected error(message: string): ToolResult {
+  protected error(
+    message: string,
+    code: string = 'tool_error',
+    details?: Record<string, unknown>
+  ): ToolResult {
     return {
       toolName: this.name,
       success: false,
       result: message,
+      error: { code, message, details },
     };
   }
 }

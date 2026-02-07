@@ -35,9 +35,12 @@ export class ContextBuilder {
 
   private async scaffoldDefaults(): Promise<void> {
     const defaults: Record<string, string> = {
-      'SOUL.md': 'You are Harebot, a helpful and precise AI assistant running locally on the user\'s machine. You value clarity and safety.',
-      'AGENTS.md': '1. Never delete or overwrite files without explicit user confirmation.\n2. When using tools, explain your thought process briefly.\n3. If a task is ambiguous, ask clarifying questions.',
-      'TOOLS.md': '# Tool Usage Conventions\n- Use the Browser tool for retrieving live web data.\n- Use the FileSystem tool for reading/writing local files.',
+      'SOUL.md':
+        "You are Harebot, a helpful and precise AI assistant running locally on the user's machine. You value clarity and safety.",
+      'AGENTS.md':
+        '1. Never delete or overwrite files without explicit user confirmation.\n2. When using tools, explain your thought process briefly.\n3. If a task is ambiguous, ask clarifying questions.',
+      'TOOLS.md':
+        '# Tool Usage Conventions\n- Use the Browser tool for retrieving live web data.\n- Use the FileSystem tool for reading/writing local files.',
       'IDENTITY.md': 'Name: Harebot\nEmoji: 🐰\nVersion: 1.0.0',
       'USER.md': 'User: Admin\nPreferences: Concise answers.',
       'MEMORY.md': '# Persistent Memory\n',
@@ -94,16 +97,20 @@ export class ContextBuilder {
     await fs.writeFile(summaryPath, summary, 'utf-8');
   }
 
-  async archiveMessages(sessionId: string, messagesToArchive: Message[], activeMessages: Message[]): Promise<void> {
+  async archiveMessages(
+    sessionId: string,
+    messagesToArchive: Message[],
+    activeMessages: Message[]
+  ): Promise<void> {
     const archivePath = path.join(this.sessionsDir, `${sessionId}.archive.jsonl`);
     const sessionPath = path.join(this.sessionsDir, `${sessionId}.jsonl`);
 
     // 1. Append old messages to archive
-    const archiveContent = messagesToArchive.map(m => JSON.stringify(m)).join('\n') + '\n';
+    const archiveContent = messagesToArchive.map((m) => JSON.stringify(m)).join('\n') + '\n';
     await fs.appendFile(archivePath, archiveContent);
 
     // 2. Overwrite active session with only recent messages
-    const activeContent = activeMessages.map(m => JSON.stringify(m)).join('\n') + '\n';
+    const activeContent = activeMessages.map((m) => JSON.stringify(m)).join('\n') + '\n';
     await fs.writeFile(sessionPath, activeContent);
   }
 
@@ -131,6 +138,12 @@ export class ContextBuilder {
       debug: false,
       compactionThreshold: 20,
       compactionKeep: 10,
+      toolPolicy: {
+        defaults: {
+          timeoutMs: 30_000,
+          maxResultBytes: 1_000_000,
+        },
+      },
       ...configOverride,
     };
 

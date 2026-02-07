@@ -21,6 +21,8 @@ import { getConfiguredLLM } from '../core/llm/getLLM.js';
 
 type ConnectionState = {
   connected: boolean;
+  requestCount: number;
+  windowStartMs: number;
 };
 
 const DEFAULT_PORT = 18789;
@@ -28,6 +30,8 @@ const DEFAULT_TICK_INTERVAL_MS = 15000;
 const DEFAULT_MAX_PAYLOAD_BYTES = 2_000_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
 const AGENT_TIMEOUT_MS = 120_000;
+const REQUEST_WINDOW_MS = 10_000;
+const MAX_REQUESTS_PER_WINDOW = 25;
 
 async function buildServer() {
   const app = Fastify({ logger: true });
@@ -37,7 +41,11 @@ async function buildServer() {
   app.get('/health', async () => ({ ok: true }));
 
   app.get('/ws', { websocket: true }, (socket: WebSocket, _req: FastifyRequest) => {
-    const state: ConnectionState = { connected: false };
+    const state: ConnectionState = {
+      connected: false,
+      requestCount: 0,
+      windowStartMs: Date.now(),
+    };
 
     socket.on('message', async (raw: Buffer) => {
       await handleMessage(raw, socket, state);
@@ -52,6 +60,10 @@ async function buildServer() {
 }
 
 async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionState) {
+  if (!recordRequest(state)) {
+    sendError(socket, 'rate_limited', 'Too many requests. Slow down.');
+    return;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.toString());
@@ -145,6 +157,17 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
     code: 'unknown_method',
     message: `Unknown method: ${request.method}`,
   });
+}
+
+function recordRequest(state: ConnectionState): boolean {
+  const now = Date.now();
+  if (now - state.windowStartMs > REQUEST_WINDOW_MS) {
+    state.windowStartMs = now;
+    state.requestCount = 0;
+  }
+
+  state.requestCount += 1;
+  return state.requestCount <= MAX_REQUESTS_PER_WINDOW;
 }
 
 async function handleAgentRequest(socket: WebSocket, request: AgentRequest) {

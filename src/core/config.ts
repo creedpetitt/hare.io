@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import type { ToolPolicyConfig } from './types.js';
 
 export type ProviderId = 'openai' | 'anthropic';
 
@@ -12,6 +13,9 @@ export type ProviderConfig = {
 export type AppConfig = {
   gateway?: {
     token?: string;
+  };
+  tools?: {
+    policy?: ToolPolicyConfig;
   };
   providers?: Partial<Record<ProviderId, ProviderConfig>>;
   defaults?: {
@@ -29,6 +33,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const providers = config.providers ?? {};
   return {
     gateway: { ...config.gateway },
+    tools: { ...config.tools, policy: config.tools?.policy },
     defaults: { ...config.defaults },
     providers: {
       openai: { ...providers.openai },

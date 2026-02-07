@@ -35,6 +35,7 @@ export interface ToolConfig {
   profile?: ToolProfile;
   allow?: string[];
   deny?: string[];
+  policy?: ToolPolicyConfig;
 }
 
 export interface AgentConfig {
@@ -45,6 +46,7 @@ export interface AgentConfig {
   compactionThreshold: number;
   compactionKeep: number;
   tools?: ToolConfig;
+  toolPolicy?: ToolPolicyConfig;
 }
 
 export interface AgentContext {
@@ -58,6 +60,23 @@ export interface ToolResult {
   toolName: string;
   success: boolean;
   result: string;
+  error?: ToolError;
+}
+
+export interface ToolError {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ToolPolicy {
+  timeoutMs?: number;
+  maxResultBytes?: number;
+}
+
+export interface ToolPolicyConfig {
+  defaults?: ToolPolicy;
+  byTool?: Record<string, ToolPolicy>;
 }
 
 export interface Tool<T extends z.ZodObject<any>> {
