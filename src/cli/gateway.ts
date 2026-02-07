@@ -58,6 +58,23 @@ export async function handleGatewayCommand(commandArgs: string[]): Promise<boole
   return true;
 }
 
+export async function isGatewayReady(): Promise<boolean> {
+  const url = process.env.HARE_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+  const config = await loadConfig();
+  const token = process.env.HARE_GATEWAY_TOKEN || config.gateway?.token;
+
+  if (!token) {
+    throw new Error('Gateway token missing. Run `hare setup` or set HARE_GATEWAY_TOKEN.');
+  }
+
+  try {
+    await probeGateway(url, token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function installService(): Promise<void> {
   const unitPath = getSystemdUnitPath();
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
