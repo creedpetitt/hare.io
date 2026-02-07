@@ -10,5 +10,5 @@ export interface LLMResponse {
  * The Agent class relies on THIS, not on specific SDKs.
  */
 export interface LLMProvider {
-  generate(systemPrompt: string, history: Message[], tools?: Tool[]): Promise<LLMResponse>;
+  generate(systemPrompt: string, history: Message[], tools?: Tool<any>[]): Promise<LLMResponse>;
 }
