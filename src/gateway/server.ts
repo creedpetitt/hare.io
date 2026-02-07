@@ -27,8 +27,8 @@ async function buildServer() {
   app.get('/ws', { websocket: true }, (socket: WebSocket, _req: FastifyRequest) => {
     const state: ConnectionState = { connected: false };
 
-    socket.on('message', (raw: Buffer) => {
-      handleMessage(raw, socket, state);
+    socket.on('message', async (raw: Buffer) => {
+      await handleMessage(raw, socket, state);
     });
 
     socket.on('close', () => {
@@ -39,7 +39,7 @@ async function buildServer() {
   return app;
 }
 
-function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionState) {
+async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionState) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.toString());
@@ -69,7 +69,7 @@ function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionState) {
       return;
     }
 
-    const expectedToken = getGatewayToken();
+    const expectedToken = await getGatewayToken();
     const providedToken = request.params?.token;
     if (!validateToken(expectedToken, providedToken)) {
       sendResponse(socket, request.id, false, undefined, {
