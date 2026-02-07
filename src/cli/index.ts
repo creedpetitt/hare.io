@@ -135,14 +135,25 @@ Examples:
     // Reconstruct the full prompt
     const prompt = [command, ...commandArgs].join(' ');
     try {
+      let streamed = false;
       const response = await runPrompt(prompt, {
         agentId,
         profile,
         local,
         gatewayUrl,
         gatewayToken,
+        onStream: local
+          ? undefined
+          : (delta) => {
+              streamed = true;
+              process.stdout.write(delta);
+            },
       });
-      console.log(response);
+      if (!streamed || !response) {
+        console.log(response);
+      } else {
+        process.stdout.write('\n');
+      }
       process.exit(0);
     } catch (error) {
       console.error('Error:', error);
@@ -169,6 +180,7 @@ Examples:
       }
 
       try {
+        let streamed = false;
         process.stdout.write('🐰 Thinking... ');
         const response = await runPrompt(input, {
           agentId,
@@ -176,14 +188,26 @@ Examples:
           local,
           gatewayUrl,
           gatewayToken,
+          onStream: local
+            ? undefined
+            : (delta) => {
+                if (!streamed) {
+                  streamed = true;
+                  readline.clearLine(process.stdout, 0);
+                  readline.cursorTo(process.stdout, 0);
+                }
+                process.stdout.write(delta);
+              },
         });
-
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-
-        console.log(`\n${response}\n`);
+        if (!streamed) {
+          readline.clearLine(process.stdout, 0);
+          readline.cursorTo(process.stdout, 0);
+          console.log(`\n${response}\n`);
+        } else {
+          process.stdout.write('\n\n');
+        }
       } catch (error) {
-        console.error('\n❌ Error:', error);
+        console.error('\nError:', error);
       }
 
       ask();

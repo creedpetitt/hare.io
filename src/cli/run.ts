@@ -9,6 +9,7 @@ export type RunPromptOptions = {
   local: boolean;
   gatewayUrl: string;
   gatewayToken?: string;
+  onStream?: (delta: string) => void;
 };
 
 export async function runPrompt(prompt: string, options: RunPromptOptions): Promise<string> {
@@ -38,6 +39,7 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
     clientPlatform: process.platform,
     clientMode: 'operator',
     scopes: ['operator.read', 'operator.write'],
+    onStream: options.onStream,
   });
 
   return client.runAgent({
