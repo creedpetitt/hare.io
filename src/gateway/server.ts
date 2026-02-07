@@ -1,21 +1,33 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
+import crypto from 'crypto';
 import {
   GatewayFrame,
   GatewayRequest,
   GatewayResponse,
   GatewayEvent,
+  type AgentRequest,
   isGatewayFrame,
   isConnectRequest,
+  isAgentRequest,
+  isConnectParams,
+  isAgentParams,
+  PROTOCOL_VERSION,
 } from './protocol.js';
 import { getGatewayToken, validateToken } from './auth.js';
+import { Agent } from '../core/Agent.js';
+import { getConfiguredLLM } from '../core/llm/getLLM.js';
 
 type ConnectionState = {
   connected: boolean;
 };
 
 const DEFAULT_PORT = 18789;
+const DEFAULT_TICK_INTERVAL_MS = 15000;
+const DEFAULT_MAX_PAYLOAD_BYTES = 2_000_000;
+const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
+const AGENT_TIMEOUT_MS = 120_000;
 
 async function buildServer() {
   const app = Fastify({ logger: true });
@@ -69,8 +81,26 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
       return;
     }
 
+    if (!isConnectParams(request.params)) {
+      sendResponse(socket, request.id, false, undefined, {
+        code: 'invalid_request',
+        message: 'Invalid connect params',
+      });
+      socket.close();
+      return;
+    }
+
+    if (!isProtocolCompatible(request.params.minProtocol, request.params.maxProtocol)) {
+      sendResponse(socket, request.id, false, undefined, {
+        code: 'protocol_mismatch',
+        message: `Unsupported protocol version. Server=${PROTOCOL_VERSION}`,
+      });
+      socket.close();
+      return;
+    }
+
     const expectedToken = await getGatewayToken();
-    const providedToken = request.params?.token;
+    const providedToken = request.params.auth?.token;
     if (!validateToken(expectedToken, providedToken)) {
       sendResponse(socket, request.id, false, undefined, {
         code: 'unauthorized',
@@ -81,7 +111,15 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
     }
 
     state.connected = true;
-    sendResponse(socket, request.id, true, { type: 'hello-ok' });
+    sendResponse(socket, request.id, true, {
+      type: 'hello-ok',
+      protocol: PROTOCOL_VERSION,
+      policy: {
+        tickIntervalMs: DEFAULT_TICK_INTERVAL_MS,
+        maxPayloadBytes: DEFAULT_MAX_PAYLOAD_BYTES,
+        maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
+      },
+    });
     return;
   }
 
@@ -90,10 +128,55 @@ async function handleMessage(raw: Buffer, socket: WebSocket, state: ConnectionSt
     return;
   }
 
+  if (request.method === 'agent') {
+    if (!isAgentRequest(request) || !isAgentParams(request.params)) {
+      sendResponse(socket, request.id, false, undefined, {
+        code: 'invalid_request',
+        message: 'Invalid agent params',
+      });
+      return;
+    }
+
+    void handleAgentRequest(socket, request);
+    return;
+  }
+
   sendResponse(socket, request.id, false, undefined, {
     code: 'unknown_method',
     message: `Unknown method: ${request.method}`,
   });
+}
+
+async function handleAgentRequest(socket: WebSocket, request: AgentRequest) {
+  const runId = crypto.randomUUID();
+  sendResponse(socket, request.id, true, { runId, status: 'accepted' });
+
+  try {
+    const params = request.params;
+    const { llm, model } = await getConfiguredLLM({
+      errorCode: 'unconfigured',
+      errorMessage: 'No API Key configured for OpenAI or Anthropic.',
+    });
+    const sessionId = params.sessionId || 'main';
+    const agentId = params.agentId || 'main';
+    const agent = new Agent(sessionId, llm, agentId, {
+      model,
+      debug: process.env.DEBUG === 'true',
+      tools: params.profile ? { profile: params.profile as any } : undefined,
+    });
+
+    const result = await runWithTimeout(agent.run(params.input), AGENT_TIMEOUT_MS);
+    sendResponse(socket, request.id, true, { runId, status: 'ok', summary: result });
+  } catch (error: any) {
+    sendResponse(socket, request.id, true, {
+      runId,
+      status: 'error',
+      error: {
+        code: error?.code || 'agent_error',
+        message: error?.message || 'Agent run failed',
+      },
+    });
+  }
 }
 
 function sendResponse(
@@ -120,6 +203,28 @@ function sendError(socket: WebSocket, code: string, message: string) {
     error: { code, message },
   };
   socket.send(JSON.stringify(frame));
+}
+
+function isProtocolCompatible(minProtocol: number, maxProtocol: number): boolean {
+  if (minProtocol > maxProtocol) return false;
+  return PROTOCOL_VERSION >= minProtocol && PROTOCOL_VERSION <= maxProtocol;
+}
+
+async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err: any = new Error('Agent timed out.');
+      err.code = 'agent_timeout';
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 async function start() {
