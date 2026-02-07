@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "bin": {
-    "hare": "./src/server/cli.ts"
+    "hare": "./src/cli/index.ts"
   },
   "scripts": {
     "lint": "eslint .",
