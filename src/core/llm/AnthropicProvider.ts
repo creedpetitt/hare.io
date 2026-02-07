@@ -6,7 +6,7 @@ export class AnthropicProvider implements LLMProvider {
   private anthropic: Anthropic;
   private model: string;
 
-  constructor(apiKey: string, model: string = 'claude-3-5-sonnet-20240620') {
+  constructor(apiKey: string, model: string) {
     this.anthropic = new Anthropic({ apiKey });
     this.model = model;
   }
