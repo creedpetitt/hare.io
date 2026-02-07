@@ -82,22 +82,21 @@ export class Agent {
 
     while (true) {
       this.throwIfAborted();
-      const response = await this.llm.generate(
+      const response = await this.llm.generateStream(
         this.constructSystemPrompt(context),
         context.history,
-        this.tools
+        this.tools,
+        this.assistantObserver
+          ? (delta) =>
+              this.assistantObserver?.onAssistantDelta?.(this.runId, delta, this.assistantIndex++)
+          : undefined,
+        this.abortController ? { abortSignal: this.abortController.signal } : undefined
       );
 
       await this.processAssistantResponse(response, context);
 
       if (response.content) {
         finalAnswer = response.content;
-        this.assistantObserver?.onAssistantDelta?.(
-          this.runId,
-          response.content,
-          this.assistantIndex
-        );
-        this.assistantIndex += 1;
       }
       if (!response.toolCalls?.length) break;
 

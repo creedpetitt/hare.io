@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { LLMProvider, LLMResponse } from './LLMProvider.js';
+import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions } from './LLMProvider.js';
 import { Message, Tool, ToolCall } from '../types.js';
 
 export class AnthropicProvider implements LLMProvider {
@@ -16,6 +16,16 @@ export class AnthropicProvider implements LLMProvider {
     history: Message[],
     tools?: Tool<any>[]
   ): Promise<LLMResponse> {
+    return this.generateStream(systemPrompt, history, tools);
+  }
+
+  async generateStream(
+    systemPrompt: string,
+    history: Message[],
+    tools?: Tool<any>[],
+    onDelta?: StreamDeltaHandler,
+    options?: StreamOptions
+  ): Promise<LLMResponse> {
     const messages = history.map((m) => this.mapMessage(m));
 
     const anthropicTools = tools?.map((t) => ({
@@ -24,7 +34,18 @@ export class AnthropicProvider implements LLMProvider {
       input_schema: t.getJsonSchema() as any,
     }));
 
-    const response = await this.anthropic.messages.create({
+    if (!onDelta) {
+      const response = await this.anthropic.messages.create({
+        model: this.model,
+        system: systemPrompt,
+        max_tokens: 4096,
+        messages: messages as any,
+        tools: anthropicTools,
+      });
+      return this.parseResponse(response);
+    }
+
+    const stream = this.anthropic.messages.stream({
       model: this.model,
       system: systemPrompt,
       max_tokens: 4096,
@@ -32,7 +53,49 @@ export class AnthropicProvider implements LLMProvider {
       tools: anthropicTools,
     });
 
-    return this.parseResponse(response);
+    let content = '';
+    const toolCalls: ToolCall[] = [];
+
+    stream.on('text', (textDelta) => {
+      if (options?.abortSignal?.aborted) return;
+      content += textDelta;
+      onDelta(textDelta);
+    });
+
+    stream.on('contentBlock', (block: any) => {
+      if (!block) return;
+      if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id,
+          type: 'function',
+          function: { name: block.name, arguments: JSON.stringify(block.input) },
+        });
+      }
+    });
+
+    if (options?.abortSignal) {
+      if (options.abortSignal.aborted) {
+        stream.abort();
+      } else {
+        options.abortSignal.addEventListener('abort', () => stream.abort(), { once: true });
+      }
+    }
+
+    try {
+      await stream.done();
+    } catch (error: any) {
+      if (error?.name === 'APIUserAbortError') {
+        const err: any = new Error('Stream aborted');
+        err.code = 'agent_cancelled';
+        throw err;
+      }
+      throw error;
+    }
+
+    return {
+      content: content || null,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    };
   }
 
   private mapMessage(m: Message) {

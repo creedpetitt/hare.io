@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import { LLMProvider, LLMResponse } from './LLMProvider.js';
+import crypto from 'crypto';
+import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions } from './LLMProvider.js';
 import { Message, Tool } from '../types.js';
 
 export class OpenAIProvider implements LLMProvider {
@@ -16,6 +17,16 @@ export class OpenAIProvider implements LLMProvider {
     history: Message[],
     tools?: Tool<any>[]
   ): Promise<LLMResponse> {
+    return this.generateStream(systemPrompt, history, tools);
+  }
+
+  async generateStream(
+    systemPrompt: string,
+    history: Message[],
+    tools?: Tool<any>[],
+    onDelta?: StreamDeltaHandler,
+    options?: StreamOptions
+  ): Promise<LLMResponse> {
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history.map((m) => this.mapMessage(m)),
@@ -30,17 +41,100 @@ export class OpenAIProvider implements LLMProvider {
       },
     }));
 
-    const response = await this.openai.chat.completions.create({
+    const stream = this.openai.chat.completions.stream({
       model: this.model,
       messages: messages as any,
       tools: openAITools?.length ? openAITools : undefined,
     });
 
-    const choice = response.choices[0]?.message;
+    if (options?.abortSignal) {
+      if (options.abortSignal.aborted) {
+        stream.abort();
+      } else {
+        options.abortSignal.addEventListener('abort', () => stream.abort(), { once: true });
+      }
+    }
+
+    let content = '';
+
+    if (onDelta) {
+      stream.on('content', (delta) => {
+        if (options?.abortSignal?.aborted) return;
+        content += delta;
+        onDelta(delta);
+      });
+    }
+
+    const toolCalls = new Map<number, { id?: string; name?: string; arguments: string }>();
+    stream.on('tool_calls.function.arguments.delta', (event) => {
+      const index = event.index ?? 0;
+      const existing = toolCalls.get(index) || { arguments: '' };
+      if (event.arguments) existing.arguments = event.arguments;
+      if (event.parsed_arguments && typeof event.parsed_arguments === 'object') {
+        try {
+          existing.arguments = JSON.stringify(event.parsed_arguments);
+        } catch {
+          // ignore
+        }
+      }
+      if (event.name) existing.name = event.name;
+      toolCalls.set(index, existing);
+    });
+
+    try {
+      const final = await stream.finalChatCompletion();
+      const choice = final.choices[0]?.message;
+      if (!content) {
+        content = choice?.content || '';
+      }
+
+      if (choice?.tool_calls?.length) {
+        const parsed = choice.tool_calls.map((call, index) => {
+          const mapped = {
+            id: call.id || `tool-${crypto.randomUUID()}`,
+            type: 'function' as const,
+            function: {
+              name: call.function.name,
+              arguments: call.function.arguments,
+            },
+          };
+          toolCalls.set(index, {
+            id: mapped.id,
+            name: mapped.function.name,
+            arguments: mapped.function.arguments,
+          });
+          return mapped;
+        });
+
+        return {
+          content: content || null,
+          toolCalls: parsed as any,
+        };
+      }
+    } catch (error: any) {
+      if (error?.name === 'APIUserAbortError' || error?.code === 'abort') {
+        const err: any = new Error('Stream aborted');
+        err.code = 'agent_cancelled';
+        throw err;
+      }
+      throw error;
+    }
+
+    const parsedToolCalls = Array.from(toolCalls.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([_, entry]) => ({
+        id: entry.id || `tool-${crypto.randomUUID()}`,
+        type: 'function' as const,
+        function: {
+          name: entry.name || 'unknown_tool',
+          arguments: entry.arguments || '{}',
+        },
+      }))
+      .filter((toolCall) => toolCall.function.name !== 'unknown_tool');
 
     return {
-      content: choice?.content || null,
-      toolCalls: choice?.tool_calls as any,
+      content: content || null,
+      toolCalls: parsedToolCalls.length > 0 ? (parsedToolCalls as any) : undefined,
     };
   }
 

@@ -5,10 +5,19 @@ export interface LLMResponse {
   toolCalls?: ToolCall[];
 }
 
-/**
- * The Contract for any AI Provider.
- * The Agent class relies on THIS, not on specific SDKs.
- */
+export type StreamDeltaHandler = (delta: string) => void;
+
+export type StreamOptions = {
+  abortSignal?: AbortSignal;
+};
+
 export interface LLMProvider {
   generate(systemPrompt: string, history: Message[], tools?: Tool<any>[]): Promise<LLMResponse>;
+  generateStream(
+    systemPrompt: string,
+    history: Message[],
+    tools?: Tool<any>[],
+    onDelta?: StreamDeltaHandler,
+    options?: StreamOptions
+  ): Promise<LLMResponse>;
 }
