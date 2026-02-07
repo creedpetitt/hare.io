@@ -12,6 +12,7 @@ import {
   showCurrentProvider,
 } from './setup.js';
 import { runPrompt } from './run.js';
+import { handleGatewayCommand } from './gateway.js';
 import { type ProviderId } from '../core/config.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.hareio');
@@ -66,6 +67,7 @@ Usage:
   hare --agent <id>         Use a specific agent profile
   hare --profile <name>     Use a specific tool profile (minimal, coding, full)
   hare --local              Run the agent locally (bypass gateway)
+  hare gateway <command>    Manage the gateway service
   hare setup                Configure AI providers
   hare token rotate         Rotate the gateway token
   hare provider use         Set the default provider
@@ -77,6 +79,7 @@ Usage:
 Examples:
   hare "Summarize this file"
   hare --agent work --profile coding "Draft an email"
+  hare gateway install
     `);
     process.exit(0);
   }
@@ -104,6 +107,12 @@ Examples:
       console.log('Cancelled.');
     }
     process.exit(0);
+  }
+
+  if (command === 'gateway') {
+    const shouldExit = await handleGatewayCommand(commandArgs);
+    if (shouldExit) process.exit(0);
+    return;
   }
 
   await ensureAuthenticated();
