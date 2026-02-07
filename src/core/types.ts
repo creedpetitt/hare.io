@@ -45,6 +45,7 @@ export interface AgentConfig {
   debug: boolean;
   compactionThreshold: number;
   compactionKeep: number;
+  bootstrapMaxChars?: number;
   tools?: ToolConfig;
   toolPolicy?: ToolPolicyConfig;
 }
@@ -61,6 +62,16 @@ export interface ToolResult {
   success: boolean;
   result: string;
   error?: ToolError;
+}
+
+export interface ToolExecutionObserver {
+  onToolStart?: (runId: string, toolName: string, input: unknown) => void;
+  onToolEnd?: (runId: string, toolName: string, output: ToolResult) => void;
+  onToolError?: (runId: string, toolName: string, error: ToolError) => void;
+}
+
+export interface AssistantStreamObserver {
+  onAssistantDelta?: (runId: string, delta: string, index: number) => void;
 }
 
 export interface ToolError {

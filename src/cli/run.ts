@@ -14,10 +14,12 @@ export type RunPromptOptions = {
 export async function runPrompt(prompt: string, options: RunPromptOptions): Promise<string> {
   if (options.local) {
     const { llm, model } = await getConfiguredLLM();
+    const config = await loadConfig();
     const agent = new Agent('main', llm, options.agentId, {
       model,
       debug: process.env.DEBUG === 'true',
       tools: options.profile ? { profile: options.profile as any } : undefined,
+      bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
     });
     return agent.run(prompt);
   }

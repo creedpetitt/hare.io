@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export const PROTOCOL_VERSION = 1;
 
 export type ClientRole = 'operator' | 'node';
@@ -47,6 +49,7 @@ export type ConnectRequest = {
   id: string;
   method: 'connect';
   params: ConnectParams;
+  idempotencyKey?: string;
 };
 
 export type PingRequest = {
@@ -54,6 +57,7 @@ export type PingRequest = {
   id: string;
   method: 'ping';
   params?: Record<string, never>;
+  idempotencyKey?: string;
 };
 
 export type AgentParams = {
@@ -63,14 +67,28 @@ export type AgentParams = {
   profile?: string;
 };
 
+export type CancelParams = {
+  runId: string;
+  reason?: string;
+};
+
 export type AgentRequest = {
   type: 'req';
   id: string;
   method: 'agent';
   params: AgentParams;
+  idempotencyKey?: string;
 };
 
-export type GatewayRequest = ConnectRequest | PingRequest | AgentRequest;
+export type CancelRequest = {
+  type: 'req';
+  id: string;
+  method: 'cancel';
+  params: CancelParams;
+  idempotencyKey?: string;
+};
+
+export type GatewayRequest = ConnectRequest | PingRequest | AgentRequest | CancelRequest;
 
 export type HelloOkPayload = {
   type: 'hello-ok';
@@ -97,7 +115,48 @@ export type AgentFinalPayload =
       runId: string;
       status: 'error';
       error: { code: string; message: string };
+    }
+  | {
+      runId: string;
+      status: 'cancelled';
+      error: { code: string; message: string };
     };
+
+export type AgentLifecyclePhase = 'start' | 'end' | 'error';
+
+export type AgentLifecycleEventPayload = {
+  runId: string;
+  sessionId: string;
+  agentId: string;
+  phase: AgentLifecyclePhase;
+  status?: 'ok' | 'error' | 'cancelled';
+  queuedAt?: number;
+  startedAt?: number;
+  endedAt?: number;
+  summary?: string;
+  error?: { code: string; message: string };
+};
+
+export type AgentStreamEventPayload = {
+  runId: string;
+  delta: string;
+  index: number;
+};
+
+export type ToolStreamEventPayload = {
+  runId: string;
+  toolName: string;
+  phase: 'start' | 'end' | 'error';
+  input?: unknown;
+  output?: unknown;
+  error?: { code: string; message: string };
+};
+
+export type CancelResponsePayload = {
+  runId: string;
+  status: 'cancelled' | 'not_found';
+  reason?: string;
+};
 
 export type GatewayResponse = {
   type: 'res';
@@ -125,42 +184,137 @@ export function isConnectRequest(frame: GatewayFrame): frame is ConnectRequest {
   return frame.type === 'req' && frame.method === 'connect';
 }
 
-export function isAgentRequest(frame: GatewayFrame): frame is AgentRequest {
-  return frame.type === 'req' && frame.method === 'agent';
-}
+const ClientInfoSchema = z
+  .object({
+    id: z.string(),
+    version: z.string(),
+    platform: z.string(),
+    mode: z.string(),
+    displayName: z.string().optional(),
+    deviceFamily: z.string().optional(),
+    modelIdentifier: z.string().optional(),
+    instanceId: z.string().optional(),
+  })
+  .strict();
 
-export function isConnectParams(value: unknown): value is ConnectParams {
-  if (!isRecord(value)) return false;
+const ConnectAuthSchema = z
+  .object({
+    token: z.string().optional(),
+    password: z.string().optional(),
+    deviceToken: z.string().optional(),
+  })
+  .strict();
 
-  if (!isNumber(value.minProtocol) || !isNumber(value.maxProtocol)) return false;
-  if (!isRecord(value.client)) return false;
-  if (!isString(value.client.id)) return false;
-  if (!isString(value.client.version)) return false;
-  if (!isString(value.client.platform)) return false;
-  if (!isString(value.client.mode)) return false;
-  if (!isString(value.role)) return false;
-  if (!isStringArray(value.scopes)) return false;
+const DeviceIdentitySchema = z
+  .object({
+    id: z.string().optional(),
+    publicKey: z.string().optional(),
+    signature: z.string().optional(),
+    signedAt: z.number().int().optional(),
+    nonce: z.string().optional(),
+  })
+  .strict();
 
-  return true;
-}
+const ConnectParamsSchema = z
+  .object({
+    minProtocol: z.number().int(),
+    maxProtocol: z.number().int(),
+    client: ClientInfoSchema,
+    role: z.enum(['operator', 'node']),
+    scopes: z.array(z.string()),
+    caps: z.array(z.string()).optional(),
+    commands: z.array(z.string()).optional(),
+    permissions: z.record(z.boolean()).optional(),
+    auth: ConnectAuthSchema.optional(),
+    locale: z.string().optional(),
+    userAgent: z.string().optional(),
+    device: DeviceIdentitySchema.optional(),
+  })
+  .strict();
 
-export function isAgentParams(value: unknown): value is AgentParams {
-  if (!isRecord(value)) return false;
-  return isString(value.input);
-}
+const AgentParamsSchema = z
+  .object({
+    input: z.string(),
+    sessionId: z.string().optional(),
+    agentId: z.string().optional(),
+    profile: z.string().optional(),
+  })
+  .strict();
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+const CancelParamsSchema = z
+  .object({
+    runId: z.string(),
+    reason: z.string().optional(),
+  })
+  .strict();
 
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
+const ConnectRequestSchema = z
+  .object({
+    type: z.literal('req'),
+    id: z.string(),
+    method: z.literal('connect'),
+    params: ConnectParamsSchema,
+    idempotencyKey: z.string().optional(),
+  })
+  .strict();
 
-function isNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
+const PingRequestSchema = z
+  .object({
+    type: z.literal('req'),
+    id: z.string(),
+    method: z.literal('ping'),
+    params: z.record(z.never()).optional(),
+    idempotencyKey: z.string().optional(),
+  })
+  .strict();
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+const AgentRequestSchema = z
+  .object({
+    type: z.literal('req'),
+    id: z.string(),
+    method: z.literal('agent'),
+    params: AgentParamsSchema,
+    idempotencyKey: z.string().optional(),
+  })
+  .strict();
+
+const CancelRequestSchema = z
+  .object({
+    type: z.literal('req'),
+    id: z.string(),
+    method: z.literal('cancel'),
+    params: CancelParamsSchema,
+    idempotencyKey: z.string().optional(),
+  })
+  .strict();
+
+const GatewayRequestSchema = z.union([
+  ConnectRequestSchema,
+  PingRequestSchema,
+  AgentRequestSchema,
+  CancelRequestSchema,
+]);
+
+export type ParsedGatewayRequest = {
+  ok: true;
+  request: GatewayRequest;
+};
+
+export type ParsedGatewayRequestError = {
+  ok: false;
+  error: { code: string; message: string };
+};
+
+export function parseGatewayRequest(
+  value: unknown
+): ParsedGatewayRequest | ParsedGatewayRequestError {
+  const result = GatewayRequestSchema.safeParse(value);
+  if (!result.success) {
+    return {
+      ok: false,
+      error: { code: 'invalid_request', message: 'Request does not match schema.' },
+    };
+  }
+
+  return { ok: true, request: result.data };
 }

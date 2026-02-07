@@ -13,6 +13,18 @@ async function readFileSafe(filePath: string, defaultValue = ''): Promise<string
   }
 }
 
+function formatMissingMarker(name: string): string {
+  return `[MISSING ${name}]`;
+}
+
+function truncateBootstrap(name: string, content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const truncated = content.slice(0, maxChars);
+  return `${truncated}
+
+[TRUNCATED ${name} TO ${maxChars} CHARS]`;
+}
+
 export class ContextBuilder {
   private configDir: string;
   private workspaceDir: string;
@@ -56,16 +68,28 @@ export class ContextBuilder {
     }
   }
 
-  async loadBootstrap(): Promise<BootstrapFiles> {
-    const [soul, agents, tools, identity, user, memory] = await Promise.all([
-      readFileSafe(path.join(this.workspaceDir, 'SOUL.md')),
-      readFileSafe(path.join(this.workspaceDir, 'AGENTS.md')),
-      readFileSafe(path.join(this.workspaceDir, 'TOOLS.md')),
-      readFileSafe(path.join(this.workspaceDir, 'IDENTITY.md')),
-      readFileSafe(path.join(this.workspaceDir, 'USER.md')),
-      readFileSafe(path.join(this.workspaceDir, 'MEMORY.md')),
+  async loadBootstrap(maxChars: number = 20_000): Promise<BootstrapFiles> {
+    const entries = await Promise.all([
+      this.loadBootstrapFile('SOUL.md', maxChars),
+      this.loadBootstrapFile('AGENTS.md', maxChars),
+      this.loadBootstrapFile('TOOLS.md', maxChars),
+      this.loadBootstrapFile('IDENTITY.md', maxChars),
+      this.loadBootstrapFile('USER.md', maxChars),
+      this.loadBootstrapFile('MEMORY.md', maxChars),
     ]);
+    const [soul, agents, tools, identity, user, memory] = entries;
     return { soul, agents, tools, identity, user, memory };
+  }
+
+  private async loadBootstrapFile(name: string, maxChars: number): Promise<string> {
+    const filePath = path.join(this.workspaceDir, name);
+    try {
+      await fs.access(filePath);
+    } catch {
+      return formatMissingMarker(name);
+    }
+    const content = await readFileSafe(filePath);
+    return truncateBootstrap(name, content, maxChars);
   }
 
   async loadSession(sessionId: string): Promise<Message[]> {
@@ -127,7 +151,8 @@ export class ContextBuilder {
 
   async build(sessionId: string, configOverride?: Partial<AgentConfig>): Promise<AgentContext> {
     await this.init();
-    const files = await this.loadBootstrap();
+    const maxChars = configOverride?.bootstrapMaxChars ?? 20_000;
+    const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
     const summary = await this.loadSummary(sessionId);
 
@@ -138,6 +163,7 @@ export class ContextBuilder {
       debug: false,
       compactionThreshold: 20,
       compactionKeep: 10,
+      bootstrapMaxChars: maxChars,
       toolPolicy: {
         defaults: {
           timeoutMs: 30_000,

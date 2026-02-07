@@ -17,6 +17,11 @@ export type AppConfig = {
   tools?: {
     policy?: ToolPolicyConfig;
   };
+  agents?: {
+    defaults?: {
+      bootstrapMaxChars?: number;
+    };
+  };
   providers?: Partial<Record<ProviderId, ProviderConfig>>;
   defaults?: {
     provider?: ProviderId;
@@ -31,10 +36,16 @@ export const CONFIG_FILE = path.join(CONFIG_DIR, 'hare.json');
 
 export function normalizeConfig(config: AppConfig): AppConfig {
   const providers = config.providers ?? {};
+  const agents = config.agents ?? {};
+  const agentDefaults = agents.defaults ?? {};
   return {
     gateway: { ...config.gateway },
     tools: { ...config.tools, policy: config.tools?.policy },
     defaults: { ...config.defaults },
+    agents: {
+      ...agents,
+      defaults: { ...agentDefaults },
+    },
     providers: {
       openai: { ...providers.openai },
       anthropic: { ...providers.anthropic },

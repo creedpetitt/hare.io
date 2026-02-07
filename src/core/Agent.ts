@@ -7,6 +7,8 @@ import {
   ToolCall,
   ToolPolicy,
   ToolResult,
+  ToolExecutionObserver,
+  AssistantStreamObserver,
 } from './types.js';
 import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
@@ -21,18 +23,42 @@ export class Agent {
   private tools: Tool<any>[] = [];
   private compactor: Compactor;
   private conversationSummary: string = '';
+  private runId: string;
+  private abortController?: AbortController;
+  private toolObserver?: ToolExecutionObserver;
+  private assistantObserver?: AssistantStreamObserver;
+  private assistantIndex = 0;
 
   constructor(
     sessionId: string,
     llm: LLMProvider,
     agentId: string = 'main',
-    configOverride?: Partial<AgentConfig>
+    configOverride?: Partial<AgentConfig>,
+    options?: {
+      runId?: string;
+      abortSignal?: AbortSignal;
+      toolObserver?: ToolExecutionObserver;
+      assistantObserver?: AssistantStreamObserver;
+    }
   ) {
     this.sessionId = sessionId;
     this.llm = llm;
     this.agentId = agentId;
     this.contextBuilder = new ContextBuilder(undefined, agentId);
     this.compactor = new Compactor(llm);
+    this.runId = options?.runId || 'run';
+    if (options?.abortSignal) {
+      this.abortController = new AbortController();
+      if (options.abortSignal.aborted) {
+        this.abortController.abort(options.abortSignal.reason);
+      } else {
+        options.abortSignal.addEventListener('abort', () => {
+          this.abortController?.abort(options.abortSignal?.reason);
+        });
+      }
+    }
+    this.toolObserver = options?.toolObserver;
+    this.assistantObserver = options?.assistantObserver;
 
     this.config = {
       agentId,
@@ -55,6 +81,7 @@ export class Agent {
     let finalAnswer = '';
 
     while (true) {
+      this.throwIfAborted();
       const response = await this.llm.generate(
         this.constructSystemPrompt(context),
         context.history,
@@ -63,7 +90,15 @@ export class Agent {
 
       await this.processAssistantResponse(response, context);
 
-      if (response.content) finalAnswer = response.content;
+      if (response.content) {
+        finalAnswer = response.content;
+        this.assistantObserver?.onAssistantDelta?.(
+          this.runId,
+          response.content,
+          this.assistantIndex
+        );
+        this.assistantIndex += 1;
+      }
       if (!response.toolCalls?.length) break;
 
       await this.executeTools(response.toolCalls, context);
@@ -130,6 +165,7 @@ export class Agent {
   private async executeTools(toolCalls: ToolCall[], context: AgentContext) {
     const policyConfig = context.config.tools?.policy ?? context.config.toolPolicy;
     for (const tc of toolCalls) {
+      this.throwIfAborted();
       const tool = this.tools.find((t) => t.name.toLowerCase() === tc.function.name.toLowerCase());
       let result: ToolResult;
 
@@ -144,6 +180,7 @@ export class Agent {
         try {
           const args = JSON.parse(tc.function.arguments);
           if (this.config.debug) console.log(`[TOOL CALL] ${tool.name}(${tc.function.arguments})`);
+          this.toolObserver?.onToolStart?.(this.runId, tool.name, args);
 
           // Execution is now type-safe!
           // Even though 'tool' is Tool<any>, zod inside the tool
@@ -162,6 +199,12 @@ export class Agent {
             };
           }
 
+          if (result.success) {
+            this.toolObserver?.onToolEnd?.(this.runId, tool.name, result);
+          } else if (result.error) {
+            this.toolObserver?.onToolError?.(this.runId, tool.name, result.error);
+          }
+
           if (this.config.debug) {
             const status = result.success ? 'ok' : 'error';
             const code = result.error?.code ? ` ${result.error.code}` : '';
@@ -176,6 +219,9 @@ export class Agent {
             result: `Error: ${message}`,
             error: { code, message },
           };
+          if (result.error) {
+            this.toolObserver?.onToolError?.(this.runId, tool.name, result.error);
+          }
         }
       }
 
@@ -288,6 +334,14 @@ export class Agent {
       result: result.result,
       error: result.error ?? null,
     });
+  }
+
+  private throwIfAborted() {
+    if (this.abortController?.signal.aborted) {
+      const err: any = new Error('Agent run cancelled.');
+      err.code = 'agent_cancelled';
+      throw err;
+    }
   }
 }
 
