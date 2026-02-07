@@ -37,11 +37,11 @@ export class ToolRegistry {
       this.registerDefaults();
     }
 
-    const profile = config?.profile || 'full';
+    const profile = config?.profile || 'coding';
     const allow = config?.allow || [];
     const deny = config?.deny || [];
 
-    let allowedToolNames = new Set<string>();
+    const allowedToolNames = new Set<string>();
 
     const profileTools = this.profiles[profile];
 
@@ -61,7 +61,7 @@ export class ToolRegistry {
       }
     }
 
-    if (profile === 'full' && (config?.allow?.includes('*') || allowedToolNames.has('*'))) {
+    if (config?.profile === 'full' && (config?.allow?.includes('*') || allowedToolNames.has('*'))) {
       console.warn(`[SECURITY] Agent initialized with 'full' tool profile. USE WITH CAUTION.`);
     }
 
