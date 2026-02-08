@@ -36,6 +36,25 @@ async function validateAnthropic(apiKey: string): Promise<boolean> {
   }
 }
 
+async function validateBraveSearch(apiKey: string): Promise<boolean> {
+  try {
+    const url = new URL('https://api.search.brave.com/res/v1/web/search');
+    url.searchParams.set('q', 'hare');
+    url.searchParams.set('count', '1');
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'X-Subscription-Token': apiKey,
+      },
+    });
+    if (!response.ok) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function generateGatewayToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -51,6 +70,7 @@ function getProviderStatus(config: AppConfig) {
   return {
     openaiConfigured: Boolean(config.providers?.openai?.apiKey),
     anthropicConfigured: Boolean(config.providers?.anthropic?.apiKey),
+    braveConfigured: Boolean(config.tools?.web?.search?.apiKey),
   };
 }
 
@@ -111,6 +131,29 @@ async function promptForApiKey(provider: ProviderId): Promise<string> {
   return apiKey;
 }
 
+async function promptForBraveKey(): Promise<string> {
+  let isValid = false;
+  let apiKey = '';
+
+  while (!isValid) {
+    apiKey = await password({
+      message: 'Paste your Brave Search API Key:',
+      mask: '*',
+    });
+
+    process.stdout.write('🔍 Validating key... ');
+    isValid = await validateBraveSearch(apiKey);
+
+    if (isValid) {
+      console.log('Success!');
+    } else {
+      console.log('Invalid Key. Please try again.');
+    }
+  }
+
+  return apiKey;
+}
+
 function applyProviderKey(config: AppConfig, provider: ProviderId, apiKey: string): AppConfig {
   const defaultModel = provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL;
   const existingProvider = config.providers?.[provider];
@@ -127,6 +170,21 @@ function applyProviderKey(config: AppConfig, provider: ProviderId, apiKey: strin
   return config;
 }
 
+function applyBraveKey(config: AppConfig, apiKey: string): AppConfig {
+  config.tools = {
+    ...(config.tools ?? {}),
+    web: {
+      ...(config.tools?.web ?? {}),
+      search: {
+        ...(config.tools?.web?.search ?? {}),
+        provider: 'brave',
+        apiKey,
+      },
+    },
+  };
+  return config;
+}
+
 function ensureDefaultProvider(config: AppConfig, provider: ProviderId): AppConfig {
   if (!config.defaults?.provider) {
     config.defaults = { ...(config.defaults ?? {}), provider };
@@ -137,9 +195,11 @@ function ensureDefaultProvider(config: AppConfig, provider: ProviderId): AppConf
 function resolveEnvKeys(config: AppConfig) {
   const envOpenAI = process.env.OPENAI_API_KEY;
   const envAnthropic = process.env.ANTHROPIC_API_KEY;
+  const envBrave = process.env.BRAVE_API_KEY;
   const openaiKey = config.providers?.openai?.apiKey || envOpenAI;
   const anthropicKey = config.providers?.anthropic?.apiKey || envAnthropic;
-  return { openaiKey, anthropicKey };
+  const braveKey = config.tools?.web?.search?.apiKey || envBrave;
+  return { openaiKey, anthropicKey, braveKey };
 }
 
 function selectNonInteractiveProvider(
@@ -157,6 +217,13 @@ async function validateProviderKey(provider: ProviderId, apiKey: string): Promis
   const ok = provider === 'openai' ? await validateOpenAI(apiKey) : await validateAnthropic(apiKey);
   if (!ok) {
     throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API key validation failed.`);
+  }
+}
+
+async function validateBraveKey(apiKey: string): Promise<void> {
+  const ok = await validateBraveSearch(apiKey);
+  if (!ok) {
+    throw new Error('Brave Search API key validation failed.');
   }
 }
 
@@ -206,35 +273,52 @@ export async function showCurrentProvider(): Promise<void> {
   console.log(`Default provider: ${provider}${model ? ` (${model})` : ''}`);
 }
 
-export async function ensureAuthenticated(force = false) {
+export async function ensureAuthenticated(force = false, section?: string) {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiConfigured, anthropicConfigured } = getProviderStatus(config);
+  const { openaiConfigured, anthropicConfigured, braveConfigured } = getProviderStatus(config);
   if (!force && (openaiConfigured || anthropicConfigured)) {
     await saveConfig(config);
     return;
   }
 
+  const normalizedSection = section?.toLowerCase();
+  const doLlm = !normalizedSection || normalizedSection === 'llm';
+  const doWeb = !normalizedSection || normalizedSection === 'web';
+
   console.log("\n🐰 Welcome to Harebot! Let's get you set up.\n");
 
-  const provider = await promptProviderSelection(openaiConfigured, anthropicConfigured);
-  if (provider === 'cancel') {
-    await saveConfig(config);
-    console.log('Setup cancelled. No changes made.\n');
-    return;
+  if (doLlm) {
+    const provider = await promptProviderSelection(openaiConfigured, anthropicConfigured);
+    if (provider === 'cancel') {
+      await saveConfig(config);
+      console.log('Setup cancelled. No changes made.\n');
+      return;
+    }
+
+    const shouldReplace = await shouldReplaceProvider(config, provider);
+    if (shouldReplace) {
+      const apiKey = await promptForApiKey(provider);
+      config = applyProviderKey(config, provider, apiKey);
+      config = ensureDefaultProvider(config, provider);
+    } else {
+      console.log('No provider changes made.\n');
+    }
   }
 
-  const shouldReplace = await shouldReplaceProvider(config, provider);
-  if (!shouldReplace) {
-    await saveConfig(config);
-    console.log('No changes made.\n');
-    return;
+  if (doWeb) {
+    const configureBrave = await confirm({
+      message: braveConfigured
+        ? 'Brave Search is already configured. Replace the API key?'
+        : 'Configure Brave Search API key?',
+      default: false,
+    });
+    if (configureBrave) {
+      const braveKey = await promptForBraveKey();
+      config = applyBraveKey(config, braveKey);
+    }
   }
-
-  const apiKey = await promptForApiKey(provider);
-  config = applyProviderKey(config, provider, apiKey);
-  config = ensureDefaultProvider(config, provider);
 
   await saveConfig(config);
   console.log(`Saved configuration to ${getConfigPath()}\n`);
@@ -244,7 +328,7 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiKey, anthropicKey } = resolveEnvKeys(config);
+  const { openaiKey, anthropicKey, braveKey } = resolveEnvKeys(config);
   if (!openaiKey && !anthropicKey) {
     throw new Error(
       'No provider API key found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or run `hare setup`.'
@@ -266,6 +350,11 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   }
   if (anthropicKey) {
     config = applyProviderKey(config, 'anthropic', anthropicKey);
+  }
+
+  if (braveKey) {
+    await validateBraveKey(braveKey);
+    config = applyBraveKey(config, braveKey);
   }
 
   config = ensureDefaultProvider(config, providerToUse);

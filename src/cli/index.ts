@@ -19,7 +19,7 @@ import { type ProviderId } from '../core/config.js';
 const CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
 async function main() {
-  const { agentId, profile, local, command, commandArgs } = parseArgs();
+  const { agentId, profile, local, command, commandArgs, section } = parseArgs();
 
   if (command === 'token' && commandArgs[0] === 'rotate') {
     await rotateGatewayToken();
@@ -54,7 +54,7 @@ async function main() {
 
   // Handle specialized commands that don't need the Agent
   if (command === 'setup' || command === 'config') {
-    await ensureAuthenticated(true);
+    await ensureAuthenticated(true, section);
     process.exit(0);
   }
 
@@ -79,6 +79,8 @@ Usage:
   hare gateway <command>    Manage the gateway service
   hare onboard              Run quickstart onboarding
   hare setup                Configure AI providers
+  hare setup --section web  Configure web tool providers
+  hare setup --section llm  Configure AI providers only
   hare token rotate         Rotate the gateway token
   hare provider use         Set the default provider
   hare provider current     Show the default provider

@@ -4,6 +4,7 @@ export type ParsedArgs = {
   local: boolean;
   command: string;
   commandArgs: string[];
+  section?: string;
 };
 
 export function parseArgs(): ParsedArgs {
@@ -11,6 +12,7 @@ export function parseArgs(): ParsedArgs {
   let agentId = 'main';
   let profile = undefined;
   let local = false;
+  let section = undefined;
   let command = '';
   let commandArgs: string[] = [];
 
@@ -31,6 +33,12 @@ export function parseArgs(): ParsedArgs {
         args.splice(i, 2);
         i--;
       }
+    } else if (args[i] === '--section') {
+      if (args[i + 1]) {
+        section = args[i + 1];
+        args.splice(i, 2);
+        i--;
+      }
     }
   }
 
@@ -39,5 +47,5 @@ export function parseArgs(): ParsedArgs {
     commandArgs = args.slice(1);
   }
 
-  return { agentId, profile, local, command, commandArgs };
+  return { agentId, profile, local, command, commandArgs, section };
 }
