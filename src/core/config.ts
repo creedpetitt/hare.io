@@ -29,6 +29,14 @@ export type AppConfig = {
       };
     };
   };
+  channels?: {
+    telegram?: {
+      enabled?: boolean;
+      botToken?: string;
+      allowFrom?: string[];
+      dmPolicy?: 'allowlist' | 'open' | 'disabled';
+    };
+  };
   agents?: {
     defaults?: {
       bootstrapMaxChars?: number;
@@ -53,6 +61,8 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const tools = config.tools ?? {};
   const toolsWeb = tools.web ?? {};
   const toolsWebSearch = toolsWeb.search ?? {};
+  const channels = config.channels ?? {};
+  const channelsTelegram = channels.telegram ?? {};
   return {
     gateway: { ...config.gateway },
     tools: {
@@ -63,6 +73,12 @@ export function normalizeConfig(config: AppConfig): AppConfig {
         search: {
           ...toolsWebSearch,
         },
+      },
+    },
+    channels: {
+      ...channels,
+      telegram: {
+        ...channelsTelegram,
       },
     },
     defaults: { ...config.defaults },
