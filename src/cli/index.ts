@@ -17,6 +17,7 @@ import { runOnboarding } from './onboard.js';
 import { type ProviderId } from '../core/config.js';
 import { WebSearchTool } from '../tools/web_search.js';
 import { runTelegramCommand } from './telegram.js';
+import { runDiscordCommand } from './discord.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -56,6 +57,12 @@ async function main() {
 
   if (command === 'telegram') {
     const shouldExit = await runTelegramCommand(commandArgs, { local });
+    if (shouldExit) process.exit(0);
+    return;
+  }
+
+  if (command === 'discord') {
+    const shouldExit = await runDiscordCommand(commandArgs, { local });
     if (shouldExit) process.exit(0);
     return;
   }
@@ -109,12 +116,14 @@ Usage:
   hare setup --section web  Configure web tool providers
   hare setup --section llm  Configure AI providers only
   hare setup --section telegram Configure Telegram bot token
+  hare setup --section discord Configure Discord bot token
   hare token rotate         Rotate the gateway token
   hare provider use         Set the default provider
   hare provider current     Show the default provider
   hare provider model set   Set the default model for a provider
   hare web-search           Run web search without the LLM
   hare telegram             Run Telegram channel commands
+  hare discord              Run Discord channel commands
   hare reset                Wipe memory for current agent
   hare help                 Show this message
   
@@ -122,6 +131,7 @@ Examples:
   hare "Summarize this file"
   hare --agent work --profile coding "Draft an email"
   hare gateway install
+  hare gateway foreground
   hare onboard
     `);
     process.exit(0);

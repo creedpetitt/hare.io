@@ -36,6 +36,12 @@ export type AppConfig = {
       allowFrom?: string[];
       dmPolicy?: 'allowlist' | 'open' | 'disabled';
     };
+    discord?: {
+      enabled?: boolean;
+      botToken?: string;
+      allowFrom?: string[];
+      dmPolicy?: 'allowlist' | 'open' | 'disabled';
+    };
   };
   agents?: {
     defaults?: {
@@ -63,6 +69,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const toolsWebSearch = toolsWeb.search ?? {};
   const channels = config.channels ?? {};
   const channelsTelegram = channels.telegram ?? {};
+  const channelsDiscord = channels.discord ?? {};
   return {
     gateway: { ...config.gateway },
     tools: {
@@ -79,6 +86,9 @@ export function normalizeConfig(config: AppConfig): AppConfig {
       ...channels,
       telegram: {
         ...channelsTelegram,
+      },
+      discord: {
+        ...channelsDiscord,
       },
     },
     defaults: { ...config.defaults },
