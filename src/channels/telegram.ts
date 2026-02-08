@@ -48,12 +48,10 @@ export class TelegramChannel {
 
   async start(): Promise<void> {
     await this.bot.start();
-    this.handlers.onLog?.('[telegram] bot started');
   }
 
   async stop(): Promise<void> {
     await this.bot.stop();
-    this.handlers.onLog?.('[telegram] bot stopped');
   }
 
   async send(to: string, message: string): Promise<void> {
