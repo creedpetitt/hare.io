@@ -16,6 +16,14 @@ export type AppConfig = {
   };
   tools?: {
     policy?: ToolPolicyConfig;
+    web?: {
+      search?: {
+        provider?: 'brave';
+        apiKey?: string;
+        timeoutMs?: number;
+        maxResults?: number;
+      };
+    };
   };
   agents?: {
     defaults?: {
@@ -38,9 +46,21 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const providers = config.providers ?? {};
   const agents = config.agents ?? {};
   const agentDefaults = agents.defaults ?? {};
+  const tools = config.tools ?? {};
+  const toolsWeb = tools.web ?? {};
+  const toolsWebSearch = toolsWeb.search ?? {};
   return {
     gateway: { ...config.gateway },
-    tools: { ...config.tools, policy: config.tools?.policy },
+    tools: {
+      ...tools,
+      policy: tools.policy,
+      web: {
+        ...toolsWeb,
+        search: {
+          ...toolsWebSearch,
+        },
+      },
+    },
     defaults: { ...config.defaults },
     agents: {
       ...agents,
