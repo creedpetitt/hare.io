@@ -22,6 +22,10 @@ export type AppConfig = {
         apiKey?: string;
         timeoutMs?: number;
         maxResults?: number;
+        maxResultsCap?: number;
+        cacheTtlMs?: number;
+        country?: string;
+        searchLang?: string;
       };
     };
   };

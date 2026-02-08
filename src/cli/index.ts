@@ -15,6 +15,7 @@ import { runPrompt } from './run.js';
 import { handleGatewayCommand } from './gateway.js';
 import { runOnboarding } from './onboard.js';
 import { type ProviderId } from '../core/config.js';
+import { WebSearchTool } from '../tools/web_search.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -52,6 +53,25 @@ async function main() {
     process.exit(0);
   }
 
+  if (command === 'web-search' || command === 'web_search') {
+    const parsed = parseWebSearchArgs(commandArgs);
+    if (!parsed.query) {
+      console.log('Usage: hare web-search "<query>" [--max-results N] [--country US] [--lang en]');
+      process.exit(1);
+    }
+    const tool = new WebSearchTool();
+    let validated;
+    try {
+      validated = tool.schema.parse(parsed);
+    } catch {
+      console.log('Usage: hare web-search "<query>" [--max-results N] [--country US] [--lang en]');
+      process.exit(1);
+    }
+    const result = await tool.execute(validated);
+    console.log(result.result);
+    process.exit(0);
+  }
+
   // Handle specialized commands that don't need the Agent
   if (command === 'setup' || command === 'config') {
     await ensureAuthenticated(true, section);
@@ -85,6 +105,7 @@ Usage:
   hare provider use         Set the default provider
   hare provider current     Show the default provider
   hare provider model set   Set the default model for a provider
+  hare web-search           Run web search without the LLM
   hare reset                Wipe memory for current agent
   hare help                 Show this message
   
@@ -219,3 +240,31 @@ Examples:
   ask();
 }
 main();
+
+function parseWebSearchArgs(args: string[]) {
+  const input: { query?: string; maxResults?: number; country?: string; searchLang?: string } = {};
+  const remaining: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (token === '--max-results' && args[i + 1]) {
+      input.maxResults = Number(args[i + 1]);
+      i++;
+      continue;
+    }
+    if (token === '--country' && args[i + 1]) {
+      input.country = args[i + 1];
+      i++;
+      continue;
+    }
+    if ((token === '--lang' || token === '--search-lang') && args[i + 1]) {
+      input.searchLang = args[i + 1];
+      i++;
+      continue;
+    }
+    remaining.push(token);
+  }
+  if (remaining.length > 0) {
+    input.query = remaining.join(' ');
+  }
+  return input;
+}

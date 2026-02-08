@@ -35,6 +35,8 @@ export type WebSearchInput = {
   query: string;
   maxResults?: number;
   timeoutMs?: number;
+  country?: string;
+  searchLang?: string;
 };
 
 export type WebSearchResult = {
