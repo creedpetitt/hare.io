@@ -30,3 +30,21 @@ export type SecurityOptions = {
   allowlist?: string[];
   denylist?: string[];
 };
+
+export type WebSearchInput = {
+  query: string;
+  maxResults?: number;
+  timeoutMs?: number;
+};
+
+export type WebSearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedAt?: string;
+};
+
+export type WebSearchOutput = {
+  query: string;
+  results: WebSearchResult[];
+};
