@@ -3,11 +3,12 @@ import path from 'path';
 import os from 'os';
 import type { ToolPolicyConfig } from './types.js';
 
-export type ProviderId = 'openai' | 'anthropic';
+export type ProviderId = 'openai' | 'anthropic' | 'gemini';
 
 export type ProviderConfig = {
   apiKey?: string;
   model?: string;
+  apiVersion?: string;
 };
 
 export type AppConfig = {
@@ -56,6 +57,7 @@ export type AppConfig = {
 
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-3-haiku-20240307';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.hareio');
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'hare.json');
@@ -99,6 +101,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     providers: {
       openai: { ...providers.openai },
       anthropic: { ...providers.anthropic },
+      gemini: { ...providers.gemini },
     },
   };
 }

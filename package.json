@@ -30,6 +30,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
     "@fastify/websocket": "^11.2.0",
+    "@google/generative-ai": "^0.24.1",
     "@inquirer/password": "^5.0.4",
     "@inquirer/prompts": "^8.2.0",
     "@inquirer/select": "^5.0.4",

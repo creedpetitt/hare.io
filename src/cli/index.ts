@@ -31,8 +31,8 @@ async function main() {
 
   if (command === 'provider' && commandArgs[0] === 'use') {
     const provider = commandArgs[1] as ProviderId | undefined;
-    if (!provider || (provider !== 'openai' && provider !== 'anthropic')) {
-      console.log('Usage: hare provider use <openai|anthropic>');
+    if (!provider || (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini')) {
+      console.log('Usage: hare provider use <openai|anthropic|gemini>');
       process.exit(1);
     }
     await setDefaultProvider(provider);
@@ -47,8 +47,12 @@ async function main() {
   if (command === 'provider' && commandArgs[0] === 'model' && commandArgs[1] === 'set') {
     const provider = commandArgs[2] as ProviderId | undefined;
     const model = commandArgs[3];
-    if (!provider || (provider !== 'openai' && provider !== 'anthropic') || !model) {
-      console.log('Usage: hare provider model set <openai|anthropic> <model>');
+    if (
+      !provider ||
+      (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini') ||
+      !model
+    ) {
+      console.log('Usage: hare provider model set <openai|anthropic|gemini> <model>');
       process.exit(1);
     }
     await setProviderModel(provider, model);

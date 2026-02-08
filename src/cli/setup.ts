@@ -3,36 +3,94 @@ import { confirm, password, select } from '@inquirer/prompts';
 import { Message } from '../core/types.js';
 import { OpenAIProvider } from '../core/llm/OpenAIProvider.js';
 import { AnthropicProvider } from '../core/llm/AnthropicProvider.js';
+import { GeminiProvider } from '../core/llm/GeminiProvider.js';
 import {
   loadConfig,
   saveConfig,
   getConfigPath,
   DEFAULT_OPENAI_MODEL,
   DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_GEMINI_MODEL,
   type AppConfig,
   type ProviderId,
 } from '../core/config.js';
 
-async function validateOpenAI(apiKey: string): Promise<boolean> {
+type ProviderValidation = {
+  ok: boolean;
+  model?: string;
+  apiVersion?: string;
+};
+
+async function validateOpenAI(apiKey: string): Promise<ProviderValidation> {
   try {
     const provider = new OpenAIProvider(apiKey, DEFAULT_OPENAI_MODEL);
     await provider.generate('Hello', []);
-    return true;
+    return { ok: true };
   } catch (e: any) {
     console.log(e?.message || 'OpenAI validation failed.');
-    return false;
+    return { ok: false };
   }
 }
 
-async function validateAnthropic(apiKey: string): Promise<boolean> {
+async function validateAnthropic(apiKey: string): Promise<ProviderValidation> {
   try {
     const provider = new AnthropicProvider(apiKey, DEFAULT_ANTHROPIC_MODEL);
     const history: Message[] = [{ role: 'user', content: 'ping', timestamp: Date.now() }];
     await provider.generate('Hello', history);
-    return true;
+    return { ok: true };
   } catch (e: any) {
     console.log(e?.message || 'Anthropic validation failed.');
-    return false;
+    return { ok: false };
+  }
+}
+
+async function listGeminiModels(apiKey: string, apiVersion: string) {
+  const url = new URL(`https://generativelanguage.googleapis.com/${apiVersion}/models`);
+  url.searchParams.set('key', apiKey);
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Gemini list models failed (${response.status})`);
+  }
+  const data = (await response.json()) as {
+    models?: Array<{
+      name?: string;
+      supportedGenerationMethods?: string[];
+    }>;
+  };
+  return data.models ?? [];
+}
+
+function pickGeminiModel(models: Array<{ name?: string; supportedGenerationMethods?: string[] }>) {
+  const candidates = models.filter((m) =>
+    (m.supportedGenerationMethods ?? []).includes('generateContent')
+  );
+  const preferred = candidates.find((m) => m.name?.endsWith(`/${DEFAULT_GEMINI_MODEL}`));
+  const selected = preferred || candidates[0];
+  if (!selected?.name) return undefined;
+  return selected.name.replace(/^models\//, '');
+}
+
+async function validateGemini(apiKey: string): Promise<ProviderValidation> {
+  try {
+    const history: Message[] = [{ role: 'user', content: 'ping', timestamp: Date.now() }];
+    let models;
+    let apiVersion: string | undefined;
+    try {
+      models = await listGeminiModels(apiKey, 'v1');
+      apiVersion = 'v1';
+    } catch {
+      models = await listGeminiModels(apiKey, 'v1beta');
+      apiVersion = 'v1beta';
+    }
+
+    const model = pickGeminiModel(models);
+    const validated = new GeminiProvider(apiKey, model || DEFAULT_GEMINI_MODEL, apiVersion);
+    await validated.generate('Hello', history);
+    return { ok: true, model: model || DEFAULT_GEMINI_MODEL, apiVersion };
+  } catch (e: any) {
+    console.log(e?.message || 'Gemini validation failed.');
+    return { ok: false };
   }
 }
 
@@ -92,13 +150,18 @@ function getProviderStatus(config: AppConfig) {
   return {
     openaiConfigured: Boolean(config.providers?.openai?.apiKey),
     anthropicConfigured: Boolean(config.providers?.anthropic?.apiKey),
+    geminiConfigured: Boolean(config.providers?.gemini?.apiKey),
     braveConfigured: Boolean(config.tools?.web?.search?.apiKey),
     telegramConfigured: Boolean(config.channels?.telegram?.botToken),
     discordConfigured: Boolean(config.channels?.discord?.botToken),
   };
 }
 
-async function promptProviderSelection(openaiConfigured: boolean, anthropicConfigured: boolean) {
+async function promptProviderSelection(
+  openaiConfigured: boolean,
+  anthropicConfigured: boolean,
+  geminiConfigured: boolean
+) {
   return (await select({
     message: 'Which AI provider do you want to configure?',
     choices: [
@@ -111,6 +174,11 @@ async function promptProviderSelection(openaiConfigured: boolean, anthropicConfi
         name: 'Anthropic',
         value: 'anthropic',
         description: anthropicConfigured ? 'Configured' : 'Not configured',
+      },
+      {
+        name: 'Gemini',
+        value: 'gemini',
+        description: geminiConfigured ? 'Configured' : 'Not configured',
       },
       {
         name: 'Cancel',
@@ -131,19 +199,34 @@ async function shouldReplaceProvider(config: AppConfig, provider: ProviderId): P
   });
 }
 
-async function promptForApiKey(provider: ProviderId): Promise<string> {
+async function promptForApiKey(provider: ProviderId): Promise<{
+  apiKey: string;
+  model?: string;
+  apiVersion?: string;
+}> {
   let isValid = false;
   let apiKey = '';
+  let model: string | undefined;
+  let apiVersion: string | undefined;
 
   while (!isValid) {
     apiKey = await password({
-      message: `Paste your ${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API Key:`,
+      message: `Paste your ${
+        provider === 'openai' ? 'OpenAI' : provider === 'anthropic' ? 'Anthropic' : 'Gemini'
+      } API Key:`,
       mask: '*',
     });
 
     process.stdout.write('🔍 Validating key... ');
-    isValid =
-      provider === 'openai' ? await validateOpenAI(apiKey) : await validateAnthropic(apiKey);
+    const validation =
+      provider === 'openai'
+        ? await validateOpenAI(apiKey)
+        : provider === 'anthropic'
+          ? await validateAnthropic(apiKey)
+          : await validateGemini(apiKey);
+    isValid = validation.ok;
+    model = validation.model;
+    apiVersion = validation.apiVersion;
 
     if (isValid) {
       console.log('Success!');
@@ -152,7 +235,7 @@ async function promptForApiKey(provider: ProviderId): Promise<string> {
     }
   }
 
-  return apiKey;
+  return { apiKey, model, apiVersion };
 }
 
 async function promptForBraveKey(): Promise<string> {
@@ -224,8 +307,19 @@ async function promptForDiscordToken(): Promise<string> {
   return token;
 }
 
-function applyProviderKey(config: AppConfig, provider: ProviderId, apiKey: string): AppConfig {
-  const defaultModel = provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL;
+function applyProviderKey(
+  config: AppConfig,
+  provider: ProviderId,
+  apiKey: string,
+  modelOverride?: string,
+  apiVersion?: string
+): AppConfig {
+  const defaultModel =
+    provider === 'openai'
+      ? DEFAULT_OPENAI_MODEL
+      : provider === 'anthropic'
+        ? DEFAULT_ANTHROPIC_MODEL
+        : DEFAULT_GEMINI_MODEL;
   const existingProvider = config.providers?.[provider];
 
   config.providers = {
@@ -233,7 +327,8 @@ function applyProviderKey(config: AppConfig, provider: ProviderId, apiKey: strin
     [provider]: {
       ...(existingProvider ?? {}),
       apiKey,
-      model: existingProvider?.model || defaultModel,
+      model: modelOverride || existingProvider?.model || defaultModel,
+      apiVersion: apiVersion || existingProvider?.apiVersion,
     },
   };
 
@@ -289,33 +384,55 @@ function ensureDefaultProvider(config: AppConfig, provider: ProviderId): AppConf
 function resolveEnvKeys(config: AppConfig) {
   const envOpenAI = process.env.OPENAI_API_KEY;
   const envAnthropic = process.env.ANTHROPIC_API_KEY;
+  const envGemini = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const envBrave = process.env.BRAVE_API_KEY;
   const envTelegram = process.env.TELEGRAM_BOT_TOKEN;
   const envDiscord = process.env.DISCORD_BOT_TOKEN;
   const openaiKey = config.providers?.openai?.apiKey || envOpenAI;
   const anthropicKey = config.providers?.anthropic?.apiKey || envAnthropic;
+  const geminiKey = config.providers?.gemini?.apiKey || envGemini;
   const braveKey = config.tools?.web?.search?.apiKey || envBrave;
   const telegramToken = config.channels?.telegram?.botToken || envTelegram;
   const discordToken = config.channels?.discord?.botToken || envDiscord;
-  return { openaiKey, anthropicKey, braveKey, telegramToken, discordToken };
+  return { openaiKey, anthropicKey, geminiKey, braveKey, telegramToken, discordToken };
 }
 
 function selectNonInteractiveProvider(
   preferred: ProviderId | undefined,
   openaiKey?: string,
-  anthropicKey?: string
+  anthropicKey?: string,
+  geminiKey?: string
 ): ProviderId {
   if (preferred === 'openai' && openaiKey) return 'openai';
   if (preferred === 'anthropic' && anthropicKey) return 'anthropic';
+  if (preferred === 'gemini' && geminiKey) return 'gemini';
   if (openaiKey) return 'openai';
-  return 'anthropic';
+  if (anthropicKey) return 'anthropic';
+  return 'gemini';
 }
 
-async function validateProviderKey(provider: ProviderId, apiKey: string): Promise<void> {
-  const ok = provider === 'openai' ? await validateOpenAI(apiKey) : await validateAnthropic(apiKey);
-  if (!ok) {
-    throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API key validation failed.`);
+async function validateProviderKey(
+  provider: ProviderId,
+  apiKey: string
+): Promise<ProviderValidation> {
+  const validation =
+    provider === 'openai'
+      ? await validateOpenAI(apiKey)
+      : provider === 'anthropic'
+        ? await validateAnthropic(apiKey)
+        : await validateGemini(apiKey);
+  if (!validation.ok) {
+    throw new Error(
+      `${
+        provider === 'openai'
+          ? 'OpenAI'
+          : provider === 'anthropic'
+            ? 'Anthropic'
+            : 'Gemini'
+      } API key validation failed.`
+    );
   }
+  return validation;
 }
 
 async function validateBraveKey(apiKey: string): Promise<void> {
@@ -389,9 +506,15 @@ export async function ensureAuthenticated(force = false, section?: string) {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiConfigured, anthropicConfigured, braveConfigured, telegramConfigured, discordConfigured } =
-    getProviderStatus(config);
-  if (!force && (openaiConfigured || anthropicConfigured)) {
+  const {
+    openaiConfigured,
+    anthropicConfigured,
+    geminiConfigured,
+    braveConfigured,
+    telegramConfigured,
+    discordConfigured,
+  } = getProviderStatus(config);
+  if (!force && (openaiConfigured || anthropicConfigured || geminiConfigured)) {
     await saveConfig(config);
     return;
   }
@@ -405,7 +528,11 @@ export async function ensureAuthenticated(force = false, section?: string) {
   console.log("\n🐰 Welcome to Harebot! Let's get you set up.\n");
 
   if (doLlm) {
-    const provider = await promptProviderSelection(openaiConfigured, anthropicConfigured);
+    const provider = await promptProviderSelection(
+      openaiConfigured,
+      anthropicConfigured,
+      geminiConfigured
+    );
     if (provider === 'cancel') {
       await saveConfig(config);
       console.log('Setup cancelled. No changes made.\n');
@@ -414,8 +541,8 @@ export async function ensureAuthenticated(force = false, section?: string) {
 
     const shouldReplace = await shouldReplaceProvider(config, provider);
     if (shouldReplace) {
-      const apiKey = await promptForApiKey(provider);
-      config = applyProviderKey(config, provider, apiKey);
+      const result = await promptForApiKey(provider);
+      config = applyProviderKey(config, provider, result.apiKey, result.model, result.apiVersion);
       config = ensureDefaultProvider(config, provider);
     } else {
       console.log('No provider changes made.\n');
@@ -469,22 +596,25 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiKey, anthropicKey, braveKey, telegramToken, discordToken } =
+  const { openaiKey, anthropicKey, geminiKey, braveKey, telegramToken, discordToken } =
     resolveEnvKeys(config);
-  if (!openaiKey && !anthropicKey) {
+  if (!openaiKey && !anthropicKey && !geminiKey) {
     throw new Error(
-      'No provider API key found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or run `hare setup`.'
+      'No provider API key found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY, or run `hare setup`.'
     );
   }
 
   const providerToUse = selectNonInteractiveProvider(
     config.defaults?.provider,
     openaiKey,
-    anthropicKey
+    anthropicKey,
+    geminiKey
   );
-  const keyToValidate = providerToUse === 'openai' ? openaiKey : anthropicKey;
+  const keyToValidate =
+    providerToUse === 'openai' ? openaiKey : providerToUse === 'anthropic' ? anthropicKey : geminiKey;
+  let validation: ProviderValidation | undefined;
   if (keyToValidate) {
-    await validateProviderKey(providerToUse, keyToValidate);
+    validation = await validateProviderKey(providerToUse, keyToValidate);
   }
 
   if (openaiKey) {
@@ -492,6 +622,15 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   }
   if (anthropicKey) {
     config = applyProviderKey(config, 'anthropic', anthropicKey);
+  }
+  if (geminiKey) {
+    config = applyProviderKey(
+      config,
+      'gemini',
+      geminiKey,
+      validation?.model,
+      validation?.apiVersion
+    );
   }
 
   if (braveKey) {
