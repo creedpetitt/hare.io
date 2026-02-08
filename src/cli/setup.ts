@@ -55,6 +55,17 @@ async function validateBraveSearch(apiKey: string): Promise<boolean> {
   }
 }
 
+async function validateTelegramToken(token: string): Promise<boolean> {
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    if (!response.ok) return false;
+    const json = (await response.json()) as { ok?: boolean };
+    return Boolean(json.ok);
+  } catch {
+    return false;
+  }
+}
+
 function generateGatewayToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -71,6 +82,7 @@ function getProviderStatus(config: AppConfig) {
     openaiConfigured: Boolean(config.providers?.openai?.apiKey),
     anthropicConfigured: Boolean(config.providers?.anthropic?.apiKey),
     braveConfigured: Boolean(config.tools?.web?.search?.apiKey),
+    telegramConfigured: Boolean(config.channels?.telegram?.botToken),
   };
 }
 
@@ -154,6 +166,29 @@ async function promptForBraveKey(): Promise<string> {
   return apiKey;
 }
 
+async function promptForTelegramToken(): Promise<string> {
+  let isValid = false;
+  let token = '';
+
+  while (!isValid) {
+    token = await password({
+      message: 'Paste your Telegram Bot Token:',
+      mask: '*',
+    });
+
+    process.stdout.write('🔍 Validating token... ');
+    isValid = await validateTelegramToken(token);
+
+    if (isValid) {
+      console.log('Success!');
+    } else {
+      console.log('Invalid token. Please try again.');
+    }
+  }
+
+  return token;
+}
+
 function applyProviderKey(config: AppConfig, provider: ProviderId, apiKey: string): AppConfig {
   const defaultModel = provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL;
   const existingProvider = config.providers?.[provider];
@@ -185,6 +220,18 @@ function applyBraveKey(config: AppConfig, apiKey: string): AppConfig {
   return config;
 }
 
+function applyTelegramToken(config: AppConfig, token: string): AppConfig {
+  config.channels = {
+    ...(config.channels ?? {}),
+    telegram: {
+      ...(config.channels?.telegram ?? {}),
+      enabled: true,
+      botToken: token,
+    },
+  };
+  return config;
+}
+
 function ensureDefaultProvider(config: AppConfig, provider: ProviderId): AppConfig {
   if (!config.defaults?.provider) {
     config.defaults = { ...(config.defaults ?? {}), provider };
@@ -196,10 +243,12 @@ function resolveEnvKeys(config: AppConfig) {
   const envOpenAI = process.env.OPENAI_API_KEY;
   const envAnthropic = process.env.ANTHROPIC_API_KEY;
   const envBrave = process.env.BRAVE_API_KEY;
+  const envTelegram = process.env.TELEGRAM_BOT_TOKEN;
   const openaiKey = config.providers?.openai?.apiKey || envOpenAI;
   const anthropicKey = config.providers?.anthropic?.apiKey || envAnthropic;
   const braveKey = config.tools?.web?.search?.apiKey || envBrave;
-  return { openaiKey, anthropicKey, braveKey };
+  const telegramToken = config.channels?.telegram?.botToken || envTelegram;
+  return { openaiKey, anthropicKey, braveKey, telegramToken };
 }
 
 function selectNonInteractiveProvider(
@@ -224,6 +273,13 @@ async function validateBraveKey(apiKey: string): Promise<void> {
   const ok = await validateBraveSearch(apiKey);
   if (!ok) {
     throw new Error('Brave Search API key validation failed.');
+  }
+}
+
+async function validateTelegramKey(token: string): Promise<void> {
+  const ok = await validateTelegramToken(token);
+  if (!ok) {
+    throw new Error('Telegram bot token validation failed.');
   }
 }
 
@@ -277,7 +333,8 @@ export async function ensureAuthenticated(force = false, section?: string) {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiConfigured, anthropicConfigured, braveConfigured } = getProviderStatus(config);
+  const { openaiConfigured, anthropicConfigured, braveConfigured, telegramConfigured } =
+    getProviderStatus(config);
   if (!force && (openaiConfigured || anthropicConfigured)) {
     await saveConfig(config);
     return;
@@ -286,6 +343,7 @@ export async function ensureAuthenticated(force = false, section?: string) {
   const normalizedSection = section?.toLowerCase();
   const doLlm = !normalizedSection || normalizedSection === 'llm';
   const doWeb = !normalizedSection || normalizedSection === 'web';
+  const doTelegram = !normalizedSection || normalizedSection === 'telegram';
 
   console.log("\n🐰 Welcome to Harebot! Let's get you set up.\n");
 
@@ -320,6 +378,19 @@ export async function ensureAuthenticated(force = false, section?: string) {
     }
   }
 
+  if (doTelegram) {
+    const configureTelegram = await confirm({
+      message: telegramConfigured
+        ? 'Telegram is already configured. Replace the bot token?'
+        : 'Configure Telegram bot token?',
+      default: false,
+    });
+    if (configureTelegram) {
+      const token = await promptForTelegramToken();
+      config = applyTelegramToken(config, token);
+    }
+  }
+
   await saveConfig(config);
   console.log(`Saved configuration to ${getConfigPath()}\n`);
 }
@@ -328,7 +399,7 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   let config = await loadConfig();
   config = ensureGatewayToken(config);
 
-  const { openaiKey, anthropicKey, braveKey } = resolveEnvKeys(config);
+  const { openaiKey, anthropicKey, braveKey, telegramToken } = resolveEnvKeys(config);
   if (!openaiKey && !anthropicKey) {
     throw new Error(
       'No provider API key found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or run `hare setup`.'
@@ -355,6 +426,11 @@ export async function ensureAuthenticatedNonInteractive(): Promise<void> {
   if (braveKey) {
     await validateBraveKey(braveKey);
     config = applyBraveKey(config, braveKey);
+  }
+
+  if (telegramToken) {
+    await validateTelegramKey(telegramToken);
+    config = applyTelegramToken(config, telegramToken);
   }
 
   config = ensureDefaultProvider(config, providerToUse);

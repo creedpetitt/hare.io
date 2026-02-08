@@ -16,6 +16,7 @@ import { handleGatewayCommand } from './gateway.js';
 import { runOnboarding } from './onboard.js';
 import { type ProviderId } from '../core/config.js';
 import { WebSearchTool } from '../tools/web_search.js';
+import { runTelegramCommand } from './telegram.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -51,6 +52,12 @@ async function main() {
     }
     await setProviderModel(provider, model);
     process.exit(0);
+  }
+
+  if (command === 'telegram') {
+    const shouldExit = await runTelegramCommand(commandArgs, { local });
+    if (shouldExit) process.exit(0);
+    return;
   }
 
   if (command === 'web-search' || command === 'web_search') {
@@ -101,11 +108,13 @@ Usage:
   hare setup                Configure AI providers
   hare setup --section web  Configure web tool providers
   hare setup --section llm  Configure AI providers only
+  hare setup --section telegram Configure Telegram bot token
   hare token rotate         Rotate the gateway token
   hare provider use         Set the default provider
   hare provider current     Show the default provider
   hare provider model set   Set the default model for a provider
   hare web-search           Run web search without the LLM
+  hare telegram             Run Telegram channel commands
   hare reset                Wipe memory for current agent
   hare help                 Show this message
   
