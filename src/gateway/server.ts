@@ -23,6 +23,7 @@ import { getOrCreateSessionLane } from './sessionLanes.js';
 import { registerActiveRun, updateActiveRunStart, removeActiveRun, cancelRun } from './runs.js';
 import { readIdempotency, storeIdempotency } from './idempotency.js';
 import { buildResponse, sendResponse, sendEvent, sendError } from './responses.js';
+import { startTelegramChannel, stopTelegramChannel } from './channels/telegram.js';
 
 type ConnectionState = {
   connected: boolean;
@@ -505,10 +506,12 @@ async function start() {
   const app = await buildServer();
   const port = Number(process.env.GATEWAY_PORT) || DEFAULT_PORT;
   await app.listen({ port, host: '127.0.0.1' });
+  await startTelegramChannel();
 
   const shutdown = async (signal: string) => {
     try {
       app.log.info({ signal }, 'Gateway shutting down');
+      await stopTelegramChannel();
       await app.close();
       process.exit(0);
     } catch (error) {
