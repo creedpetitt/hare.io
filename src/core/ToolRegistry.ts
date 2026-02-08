@@ -1,6 +1,7 @@
 import { Tool, ToolConfig, ToolPolicy, ToolPolicyConfig, ToolProfile } from './types.js';
 import { ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool } from '../tools/fs.js';
 import { WebFetchTool } from '../tools/web_fetch.js';
+import { WebSearchTool } from '../tools/web_search.js';
 
 export class ToolRegistry {
   private static tools = new Map<string, Tool<any>>();
@@ -31,6 +32,7 @@ export class ToolRegistry {
     this.register(new EditFileTool());
     this.register(new ListFilesTool());
     this.register(new WebFetchTool());
+    this.register(new WebSearchTool());
   }
 
   static getTools(config?: ToolConfig): Tool<any>[] {
