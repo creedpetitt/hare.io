@@ -1,6 +1,12 @@
-import { loadConfig, DEFAULT_OPENAI_MODEL, DEFAULT_ANTHROPIC_MODEL } from '../config.js';
+import {
+  loadConfig,
+  DEFAULT_OPENAI_MODEL,
+  DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_GEMINI_MODEL,
+} from '../config.js';
 import { OpenAIProvider } from './OpenAIProvider.js';
 import { AnthropicProvider } from './AnthropicProvider.js';
+import { GeminiProvider } from './GeminiProvider.js';
 import { LLMProvider } from './LLMProvider.js';
 
 export type GetLLMOptions = {
@@ -19,11 +25,15 @@ export async function getConfiguredLLM(
       const model =
         preferred === 'openai'
           ? preferredConfig.model || DEFAULT_OPENAI_MODEL
-          : preferredConfig.model || DEFAULT_ANTHROPIC_MODEL;
+          : preferred === 'anthropic'
+            ? preferredConfig.model || DEFAULT_ANTHROPIC_MODEL
+            : preferredConfig.model || DEFAULT_GEMINI_MODEL;
       const llm =
         preferred === 'openai'
           ? new OpenAIProvider(preferredConfig.apiKey, model)
-          : new AnthropicProvider(preferredConfig.apiKey, model);
+          : preferred === 'anthropic'
+            ? new AnthropicProvider(preferredConfig.apiKey, model)
+            : new GeminiProvider(preferredConfig.apiKey, model, preferredConfig.apiVersion);
       return { llm, model };
     }
   }
@@ -37,6 +47,11 @@ export async function getConfiguredLLM(
   if (anthropicConfig?.apiKey) {
     const model = anthropicConfig.model || DEFAULT_ANTHROPIC_MODEL;
     return { llm: new AnthropicProvider(anthropicConfig.apiKey, model), model };
+  }
+  const geminiConfig = config.providers?.gemini;
+  if (geminiConfig?.apiKey) {
+    const model = geminiConfig.model || DEFAULT_GEMINI_MODEL;
+    return { llm: new GeminiProvider(geminiConfig.apiKey, model, geminiConfig.apiVersion), model };
   }
 
   const error: any = new Error(options.errorMessage || 'No API Key found after auth check.');
