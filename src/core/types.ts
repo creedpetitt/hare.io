@@ -29,6 +29,13 @@ export interface BootstrapFiles {
   memory: string;
 }
 
+export interface SkillDefinition {
+  name: string;
+  description: string;
+  content: string;
+  location: string;
+}
+
 export type ToolProfile = 'minimal' | 'coding' | 'messaging' | 'full';
 
 export interface ToolConfig {
@@ -55,6 +62,7 @@ export interface AgentContext {
   history: Message[];
   files: BootstrapFiles;
   summary: string;
+  skills: SkillDefinition[];
 }
 
 export interface ToolResult {

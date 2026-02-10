@@ -252,6 +252,10 @@ export class Agent {
       this.tools.length > 0
         ? this.tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
         : 'No tools available.';
+    const skillsPrompt =
+      context.skills.length > 0
+        ? context.skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')
+        : 'No skills available.';
 
     const parts = [
       '=== IDENTITY ===',
@@ -275,6 +279,9 @@ export class Agent {
       '=== TOOL RESPONSE FORMAT ===',
       'Tool responses are JSON with fields: toolName, success, result, error.',
       'error is null or { code, message, details }.',
+      '',
+      '=== AVAILABLE SKILLS ===',
+      skillsPrompt,
       '',
       '=== AVAILABLE TOOLS ===',
       toolsPrompt,

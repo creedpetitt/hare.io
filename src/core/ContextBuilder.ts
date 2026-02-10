@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { AgentConfig, AgentContext, BootstrapFiles, Message } from './types.js';
+import { AgentConfig, AgentContext, BootstrapFiles, Message, SkillDefinition } from './types.js';
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -25,10 +25,16 @@ function truncateBootstrap(name: string, content: string, maxChars: number): str
 [TRUNCATED ${name} TO ${maxChars} CHARS]`;
 }
 
+type SkillFrontmatter = {
+  name?: string;
+  description?: string;
+};
+
 export class ContextBuilder {
   private configDir: string;
   private workspaceDir: string;
   private sessionsDir: string;
+  private skillsDir: string;
 
   constructor(baseDir: string = DEFAULT_CONFIG_DIR, agentId: string = 'main') {
     this.configDir = baseDir;
@@ -36,12 +42,15 @@ export class ContextBuilder {
     this.workspaceDir = path.join(baseDir, 'agents', agentId, 'workspace');
     // ~/.hareio/agents/<agentId>/sessions
     this.sessionsDir = path.join(baseDir, 'agents', agentId, 'sessions');
+    // ~/.hareio/agents/<agentId>/workspace/skills
+    this.skillsDir = path.join(this.workspaceDir, 'skills');
   }
 
   async init(): Promise<void> {
     // Ensure the deep structure exists
     await fs.mkdir(this.workspaceDir, { recursive: true });
     await fs.mkdir(this.sessionsDir, { recursive: true });
+    await fs.mkdir(this.skillsDir, { recursive: true });
     await this.scaffoldDefaults();
   }
 
@@ -64,6 +73,69 @@ export class ContextBuilder {
         await fs.access(filePath);
       } catch {
         await fs.writeFile(filePath, content, 'utf-8');
+      }
+    }
+
+    const skillDefaults: Record<string, string> = {
+      'web-research': `---
+name: web-research
+description: Search + fetch + summarize a topic.
+---
+Use this when the user asks for research or sources.
+1. Run web_search for 3-5 results.
+2. Fetch the top 1-2 results with web_fetch.
+3. Summarize with short citations.`,
+      'doc-writer': `---
+name: doc-writer
+description: Turn notes into a clean document.
+---
+Use this to turn bullet points into a structured doc.
+1. Ask for missing sections if required.
+2. Draft with headings, concise paragraphs.
+3. End with next steps if appropriate.`,
+      'release-notes': `---
+name: release-notes
+description: Summarize changes into release notes.
+---
+Use this when given commits or change lists.
+1. Group changes by feature/fix/chore.
+2. Call out breaking changes first.
+3. Keep it short and readable.`,
+      'code-review': `---
+name: code-review
+description: Review code for bugs, risks, and missing tests.
+---
+When reviewing:
+1. List high-severity issues first.
+2. Then medium/low.
+3. Call out missing tests.
+4. Be concrete with file refs.`,
+      'security-review': `---
+name: security-review
+description: Security-focused code review.
+---
+When reviewing:
+1. Look for auth, injection, and data exposure risks.
+2. Flag insecure defaults.
+3. Suggest minimal, safe fixes.`,
+      'clean-code': `---
+name: clean-code
+description: Improve readability and maintainability.
+---
+When asked to clean up code:
+1. Reduce complexity and duplication.
+2. Improve naming and structure.
+3. Keep behavior unchanged unless stated.`,
+    };
+
+    for (const [skillName, content] of Object.entries(skillDefaults)) {
+      const skillDir = path.join(this.skillsDir, skillName);
+      const skillPath = path.join(skillDir, 'SKILL.md');
+      await fs.mkdir(skillDir, { recursive: true });
+      try {
+        await fs.access(skillPath);
+      } catch {
+        await fs.writeFile(skillPath, content, 'utf-8');
       }
     }
   }
@@ -90,6 +162,37 @@ export class ContextBuilder {
     }
     const content = await readFileSafe(filePath);
     return truncateBootstrap(name, content, maxChars);
+  }
+
+  async loadSkills(maxCharsPerSkill: number = 4_000): Promise<SkillDefinition[]> {
+    const skills: SkillDefinition[] = [];
+    let entries: Array<import('fs').Dirent> = [];
+    try {
+      entries = await fs.readdir(this.skillsDir, { withFileTypes: true });
+    } catch {
+      return skills;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillDir = path.join(this.skillsDir, entry.name);
+      const skillPath = path.join(skillDir, 'SKILL.md');
+      const raw = await readFileSafe(skillPath);
+      if (!raw) continue;
+      const { frontmatter, body } = parseFrontmatter(raw);
+      const name = frontmatter.name || entry.name;
+      const description =
+        frontmatter.description || firstNonEmptyLine(body) || 'No description.';
+      const content = truncateSkill(body, maxCharsPerSkill);
+      skills.push({
+        name,
+        description,
+        content,
+        location: skillPath,
+      });
+    }
+
+    return skills;
   }
 
   async loadSession(sessionId: string): Promise<Message[]> {
@@ -155,6 +258,7 @@ export class ContextBuilder {
     const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
     const summary = await this.loadSummary(sessionId);
+    const skills = await this.loadSkills();
 
     const config: AgentConfig = {
       agentId: 'main', // Default
@@ -173,6 +277,44 @@ export class ContextBuilder {
       ...configOverride,
     };
 
-    return { config, history, files, summary };
+    return { config, history, files, summary, skills };
   }
+}
+
+function parseFrontmatter(raw: string): { frontmatter: SkillFrontmatter; body: string } {
+  if (!raw.startsWith('---')) {
+    return { frontmatter: {}, body: raw.trim() };
+  }
+  const end = raw.indexOf('\n---', 3);
+  if (end === -1) {
+    return { frontmatter: {}, body: raw.trim() };
+  }
+  const front = raw.slice(3, end).trim();
+  const body = raw.slice(end + 4).trim();
+  const frontmatter: SkillFrontmatter = {};
+  for (const line of front.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key === 'name') frontmatter.name = value;
+    if (key === 'description') frontmatter.description = value;
+  }
+  return { frontmatter, body };
+}
+
+function firstNonEmptyLine(content: string): string | undefined {
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function truncateSkill(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const truncated = content.slice(0, maxChars);
+  return `${truncated}
+
+[TRUNCATED SKILL TO ${maxChars} CHARS]`;
 }
