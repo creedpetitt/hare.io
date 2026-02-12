@@ -1,6 +1,6 @@
 import { TelegramChannel } from '../../channels/telegram.js';
 import { loadConfig } from '../../core/config.js';
-import { runPrompt } from '../../cli/run.js';
+import { runPrompt } from '@runtime/chat.js';
 
 let active: TelegramChannel | undefined;
 

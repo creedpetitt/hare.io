@@ -5,6 +5,7 @@ import { GatewayClient } from '@gateway/client.js';
 
 export type RunPromptOptions = {
   agentId: string;
+  sessionId?: string;
   profile?: string;
   local: boolean;
   gatewayUrl: string;
@@ -13,11 +14,12 @@ export type RunPromptOptions = {
 };
 
 export async function runPrompt(prompt: string, options: RunPromptOptions): Promise<string> {
+  const sessionId = options.sessionId || options.agentId;
   if (options.local) {
     const { llm, model } = await getConfiguredLLM();
     const config = await loadConfig();
     const agent = new Agent(
-      options.agentId,
+      sessionId,
       llm,
       options.agentId,
       {
@@ -57,7 +59,7 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
 
   return client.runAgent({
     input: prompt,
-    sessionId: options.agentId,
+    sessionId,
     agentId: options.agentId,
     profile: options.profile,
   });

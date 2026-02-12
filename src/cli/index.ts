@@ -2,7 +2,7 @@
 import readline from 'readline';
 import { parseArgs } from '@cli/args.js';
 import { ensureAuthenticated } from '@cli/setup/index.js';
-import { runPrompt } from '@cli/run.js';
+import { runPrompt } from '@runtime/chat.js';
 import { dispatch } from '@cli/commands/index.js';
 
 async function main() {

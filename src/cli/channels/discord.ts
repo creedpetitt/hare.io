@@ -1,6 +1,6 @@
 import { DiscordChannel } from '@channels/discord.js';
 import { loadConfig, saveConfig } from '@core/config.js';
-import { runPrompt } from '@cli/run.js';
+import { runPrompt } from '@runtime/chat.js';
 import {
   PAIRING_TIMEOUT_MS,
   generatePairingCode,
