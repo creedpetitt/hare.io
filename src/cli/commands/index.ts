@@ -8,6 +8,7 @@ import { handleWebSearchCommand } from '@cli/commands/web-search.js';
 import { handleResetCommand } from '@cli/commands/reset.js';
 import { handleHelpCommand } from '@cli/commands/help.js';
 import { handleOnboardCommand } from '@cli/commands/onboard.js';
+import { handleTuiCommand } from '@cli/commands/tui.js';
 
 export type CommandResult = {
   handled: boolean;
@@ -28,6 +29,7 @@ const COMMAND_TABLE: Record<string, CommandHandler> = {
   'web-search': handleWebSearchCommand,
   web_search: handleWebSearchCommand,
   onboard: handleOnboardCommand,
+  tui: handleTuiCommand,
   reset: handleResetCommand,
   help: handleHelpCommand,
 };

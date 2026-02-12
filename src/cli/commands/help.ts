@@ -22,6 +22,7 @@ Usage:
   hare provider use         Set the default provider
   hare provider current     Show the default provider
   hare provider model set   Set the default model for a provider
+  hare tui                  Launch interactive TUI chat client (slash commands in gateway mode)
   hare web-search           Run web search without the LLM
   hare telegram             Run Telegram channel commands
   hare discord              Run Discord channel commands
@@ -31,6 +32,9 @@ Usage:
 Examples:
   hare "Summarize this file"
   hare --agent work --profile coding "Draft an email"
+  hare tui
+  hare tui --local
+  hare tui --gateway --url ws://127.0.0.1:18789/ws
   hare gateway install
   hare gateway foreground
   hare onboard
