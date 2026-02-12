@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { AgentConfig, AgentContext, BootstrapFiles, Message, SkillDefinition } from './types.js';
+import { sanitizeHistory } from './history.js';
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -200,7 +201,7 @@ When asked to clean up code:
     const content = await readFileSafe(sessionPath);
     if (!content) return [];
 
-    return content
+    const parsed = content
       .split('\n')
       .filter((line) => line.trim() !== '')
       .map((line) => {
@@ -212,6 +213,23 @@ When asked to clean up code:
         }
       })
       .filter((msg): msg is Message => msg !== null);
+
+    const { messages, droppedInvalidTools } = sanitizeHistory(parsed);
+    if (droppedInvalidTools > 0) {
+      console.warn(
+        `[ContextBuilder] Dropped ${droppedInvalidTools} orphan tool message(s) from session "${sessionId}".`
+      );
+      try {
+        await this.rewriteSessionFile(sessionPath, messages);
+      } catch (error) {
+        console.warn(
+          `[ContextBuilder] Could not rewrite sanitized session "${sessionId}" at ${sessionPath}.`,
+          error
+        );
+      }
+    }
+
+    return messages;
   }
 
   async loadSummary(sessionId: string): Promise<string> {
@@ -244,6 +262,12 @@ When asked to clean up code:
   async appendMessage(sessionId: string, message: Message): Promise<void> {
     const sessionPath = path.join(this.sessionsDir, `${sessionId}.jsonl`);
     await fs.appendFile(sessionPath, JSON.stringify(message) + '\n');
+  }
+
+  private async rewriteSessionFile(sessionPath: string, messages: Message[]): Promise<void> {
+    const serialized =
+      messages.length > 0 ? messages.map((m) => JSON.stringify(m)).join('\n') + '\n' : '';
+    await fs.writeFile(sessionPath, serialized, 'utf-8');
   }
 
   async appendMemory(content: string): Promise<void> {

@@ -14,6 +14,7 @@ import {
 import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
 import { ToolRegistry } from './ToolRegistry.js';
+import { sanitizeHistory } from './history.js';
 
 export class Agent {
   private llm: LLMProvider;
@@ -86,6 +87,16 @@ export class Agent {
 
     while (true) {
       this.throwIfAborted();
+      const sanitizedHistory = sanitizeHistory(context.history);
+      if (sanitizedHistory.droppedInvalidTools > 0) {
+        if (this.config.debug) {
+          console.warn(
+            `[HISTORY] Dropped ${sanitizedHistory.droppedInvalidTools} orphan tool message(s) before model call.`
+          );
+        }
+        context.history = sanitizedHistory.messages;
+      }
+
       const response = await this.llm.generateStream(
         this.constructSystemPrompt(context, activeSkills),
         context.history,
@@ -142,7 +153,13 @@ export class Agent {
     }
 
     await this.contextBuilder.saveSummary(this.sessionId, this.conversationSummary);
-    const active = context.history.slice(-keepCount);
+    const activeWindow = context.history.slice(-keepCount);
+    const { messages: active, droppedInvalidTools } = sanitizeHistory(activeWindow);
+    if (droppedInvalidTools > 0 && this.config.debug) {
+      console.warn(
+        `[HISTORY] Dropped ${droppedInvalidTools} orphan tool message(s) during compaction.`
+      );
+    }
     await this.contextBuilder.archiveMessages(this.sessionId, toCompact, active);
     context.history = active;
   }
