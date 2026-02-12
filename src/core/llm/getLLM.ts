@@ -21,21 +21,24 @@ export async function getConfiguredLLM(
   const preferred = config.defaults?.provider;
   if (preferred) {
     const preferredConfig = config.providers?.[preferred];
-    if (preferredConfig?.apiKey) {
-      const model =
-        preferred === 'openai'
-          ? preferredConfig.model || DEFAULT_OPENAI_MODEL
-          : preferred === 'anthropic'
-            ? preferredConfig.model || DEFAULT_ANTHROPIC_MODEL
-            : preferredConfig.model || DEFAULT_GEMINI_MODEL;
-      const llm =
-        preferred === 'openai'
-          ? new OpenAIProvider(preferredConfig.apiKey, model)
-          : preferred === 'anthropic'
-            ? new AnthropicProvider(preferredConfig.apiKey, model)
-            : new GeminiProvider(preferredConfig.apiKey, model, preferredConfig.apiVersion);
-      return { llm, model };
+    if (!preferredConfig?.apiKey) {
+      const error: any = new Error(`Preferred provider "${preferred}" is missing an API key.`);
+      error.code = options.errorCode || 'missing_api_key';
+      throw error;
     }
+    const model =
+      preferred === 'openai'
+        ? preferredConfig.model || DEFAULT_OPENAI_MODEL
+        : preferred === 'anthropic'
+          ? preferredConfig.model || DEFAULT_ANTHROPIC_MODEL
+          : preferredConfig.model || DEFAULT_GEMINI_MODEL;
+    const llm =
+      preferred === 'openai'
+        ? new OpenAIProvider(preferredConfig.apiKey, model)
+        : preferred === 'anthropic'
+          ? new AnthropicProvider(preferredConfig.apiKey, model)
+          : new GeminiProvider(preferredConfig.apiKey, model, preferredConfig.apiVersion);
+    return { llm, model };
   }
 
   const openaiConfig = config.providers?.openai;

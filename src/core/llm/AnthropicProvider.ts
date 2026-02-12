@@ -109,12 +109,15 @@ export class AnthropicProvider implements LLMProvider {
     if (m.tool_calls) {
       return {
         role: 'assistant',
-        content: m.tool_calls.map((tc) => ({
-          type: 'tool_use',
-          id: tc.id,
-          name: tc.function.name,
-          input: JSON.parse(tc.function.arguments),
-        })),
+        content: [
+          ...(m.content ? [{ type: 'text', text: m.content }] : []),
+          ...m.tool_calls.map((tc) => ({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.function.name,
+            input: JSON.parse(tc.function.arguments),
+          })),
+        ],
       };
     }
 

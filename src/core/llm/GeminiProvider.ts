@@ -145,7 +145,7 @@ export class GeminiProvider implements LLMProvider {
 
     const calls = (response.functionCalls?.() || []) as Array<{ name: string; args: object }>;
     const toolCalls: ToolCall[] = calls.map((call) => ({
-      id: `tool-${crypto.randomUUID()}`,
+      id: crypto.randomUUID(),
       type: 'function',
       function: {
         name: call.name,

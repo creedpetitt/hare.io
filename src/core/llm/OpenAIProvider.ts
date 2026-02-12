@@ -27,9 +27,10 @@ export class OpenAIProvider implements LLMProvider {
     onDelta?: StreamDeltaHandler,
     options?: StreamOptions
   ): Promise<LLMResponse> {
+    const normalizeToolId = this.createToolIdNormalizer();
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...history.map((m) => this.mapMessage(m)),
+      ...history.map((m) => this.mapMessage(m, normalizeToolId)),
     ];
 
     const openAITools = tools?.map((t) => ({
@@ -69,7 +70,7 @@ export class OpenAIProvider implements LLMProvider {
     stream.on('tool_calls.function.arguments.delta', (event) => {
       const index = event.index ?? 0;
       const existing = toolCalls.get(index) || { arguments: '' };
-      if (event.arguments) existing.arguments = event.arguments;
+      if (event.arguments) existing.arguments += event.arguments;
       if (event.parsed_arguments && typeof event.parsed_arguments === 'object') {
         try {
           existing.arguments = JSON.stringify(event.parsed_arguments);
@@ -91,7 +92,7 @@ export class OpenAIProvider implements LLMProvider {
       if (choice?.tool_calls?.length) {
         const parsed = choice.tool_calls.map((call, index) => {
           const mapped = {
-            id: call.id || `tool-${crypto.randomUUID()}`,
+            id: call.id || crypto.randomUUID(),
             type: 'function' as const,
             function: {
               name: call.function.name,
@@ -123,7 +124,7 @@ export class OpenAIProvider implements LLMProvider {
     const parsedToolCalls = Array.from(toolCalls.entries())
       .sort(([a], [b]) => a - b)
       .map(([_, entry]) => ({
-        id: entry.id || `tool-${crypto.randomUUID()}`,
+        id: entry.id || crypto.randomUUID(),
         type: 'function' as const,
         function: {
           name: entry.name || 'unknown_tool',
@@ -138,11 +139,33 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
-  private mapMessage(m: Message) {
+  private mapMessage(m: Message, normalizeToolId?: (id: string) => string) {
     const msg: any = { role: m.role, content: m.content };
     if (m.name) msg.name = m.name;
-    if (m.tool_calls) msg.tool_calls = m.tool_calls;
-    if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
+    if (m.tool_calls) {
+      msg.tool_calls = m.tool_calls.map((tc) => ({
+        ...tc,
+        id: normalizeToolId ? normalizeToolId(tc.id) : tc.id,
+      }));
+    }
+    if (m.tool_call_id) {
+      msg.tool_call_id = normalizeToolId ? normalizeToolId(m.tool_call_id) : m.tool_call_id;
+    }
     return msg;
+  }
+
+  private createToolIdNormalizer() {
+    const cache = new Map<string, string>();
+    return (id: string) => {
+      const existing = cache.get(id);
+      if (existing) return existing;
+      if (id.length <= 40) {
+        cache.set(id, id);
+        return id;
+      }
+      const normalized = crypto.createHash('sha1').update(id).digest('hex').slice(0, 40);
+      cache.set(id, normalized);
+      return normalized;
+    };
   }
 }
