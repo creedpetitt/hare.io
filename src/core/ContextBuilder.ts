@@ -258,7 +258,7 @@ When asked to clean up code:
     const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
     const summary = await this.loadSummary(sessionId);
-    const skills = await this.loadSkills();
+    const skills = await this.loadSkills(configOverride?.skills?.maxCharsPerSkill ?? 4_000);
 
     const config: AgentConfig = {
       agentId: 'main', // Default
@@ -268,6 +268,11 @@ When asked to clean up code:
       compactionThreshold: 20,
       compactionKeep: 10,
       bootstrapMaxChars: maxChars,
+      skills: {
+        autoActivate: false,
+        maxActive: 2,
+        maxCharsPerSkill: 2_000,
+      },
       toolPolicy: {
         defaults: {
           timeoutMs: 30_000,

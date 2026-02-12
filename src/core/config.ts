@@ -47,6 +47,11 @@ export type AppConfig = {
   agents?: {
     defaults?: {
       bootstrapMaxChars?: number;
+      skills?: {
+        autoActivate?: boolean;
+        maxActive?: number;
+        maxCharsPerSkill?: number;
+      };
     };
   };
   providers?: Partial<Record<ProviderId, ProviderConfig>>;
@@ -66,6 +71,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const providers = config.providers ?? {};
   const agents = config.agents ?? {};
   const agentDefaults = agents.defaults ?? {};
+  const agentSkills = agentDefaults.skills ?? {};
   const tools = config.tools ?? {};
   const toolsWeb = tools.web ?? {};
   const toolsWebSearch = toolsWeb.search ?? {};
@@ -96,7 +102,10 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     defaults: { ...config.defaults },
     agents: {
       ...agents,
-      defaults: { ...agentDefaults },
+      defaults: {
+        ...agentDefaults,
+        skills: { ...agentSkills },
+      },
     },
     providers: {
       openai: { ...providers.openai },

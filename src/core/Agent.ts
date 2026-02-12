@@ -9,6 +9,7 @@ import {
   ToolResult,
   ToolExecutionObserver,
   AssistantStreamObserver,
+  SkillDefinition,
 } from './types.js';
 import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
@@ -28,6 +29,7 @@ export class Agent {
   private toolObserver?: ToolExecutionObserver;
   private assistantObserver?: AssistantStreamObserver;
   private assistantIndex = 0;
+  private lastLoggedActiveSkills = '';
 
   constructor(
     sessionId: string,
@@ -78,12 +80,14 @@ export class Agent {
 
   async run(userInput: string): Promise<string> {
     const context = await this.prepareContext(userInput);
+    const activeSkills = this.selectActiveSkills(context.skills, []);
     let finalAnswer = '';
+    this.lastLoggedActiveSkills = '';
 
     while (true) {
       this.throwIfAborted();
       const response = await this.llm.generateStream(
-        this.constructSystemPrompt(context),
+        this.constructSystemPrompt(context, activeSkills),
         context.history,
         this.tools,
         this.assistantObserver
@@ -247,7 +251,7 @@ export class Agent {
     return content.replace(memoryPattern, '').trim();
   }
 
-  private constructSystemPrompt(context: AgentContext): string {
+  private constructSystemPrompt(context: AgentContext, activeSkills: SkillDefinition[]): string {
     const toolsPrompt =
       this.tools.length > 0
         ? this.tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
@@ -256,6 +260,23 @@ export class Agent {
       context.skills.length > 0
         ? context.skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')
         : 'No skills available.';
+    const maxCharsPerSkill = this.resolveMaxCharsPerSkill();
+    const activeSkillsPrompt =
+      activeSkills.length > 0
+        ? activeSkills
+            .map(
+              (s, index) =>
+                `[SKILL ${index + 1}] ${s.name}\n${truncateText(s.content, maxCharsPerSkill)}`
+            )
+            .join('\n\n')
+        : 'No active skills selected.';
+    if (this.config.debug) {
+      const activeNames = activeSkills.length > 0 ? activeSkills.map((s) => s.name).join(', ') : 'none';
+      if (activeNames !== this.lastLoggedActiveSkills) {
+        this.lastLoggedActiveSkills = activeNames;
+        console.log(`[SKILLS] active=${activeNames}`);
+      }
+    }
 
     const parts = [
       '=== IDENTITY ===',
@@ -282,6 +303,15 @@ export class Agent {
       '',
       '=== AVAILABLE SKILLS ===',
       skillsPrompt,
+      '',
+      '=== SKILL ACTIVATION RULES ===',
+      '- Treat skills as optional playbooks.',
+      '- Skills are activated only when explicitly provided by the chat client runtime.',
+      '- If active skills are listed below, follow them unless they conflict with higher-priority rules.',
+      '- Do not invent missing steps for a skill.',
+      '',
+      '=== ACTIVE SKILLS (FULL CONTENT) ===',
+      activeSkillsPrompt,
       '',
       '=== AVAILABLE TOOLS ===',
       toolsPrompt,
@@ -349,6 +379,30 @@ export class Agent {
       throw err;
     }
   }
+
+  private selectActiveSkills(
+    skills: SkillDefinition[],
+    forcedSkillNames: string[]
+  ): SkillDefinition[] {
+    const maxActive = this.resolveMaxActiveSkills();
+    if (maxActive <= 0 || skills.length === 0 || forcedSkillNames.length === 0) return [];
+
+    const requested = new Set(forcedSkillNames.map((name) => name.toLowerCase()));
+    const selected = skills.filter((skill) => requested.has(skill.name.toLowerCase()));
+    return uniqueByName(selected).slice(0, maxActive);
+  }
+
+  private resolveMaxActiveSkills(): number {
+    const raw = this.config.skills?.maxActive;
+    if (!raw || Number.isNaN(raw)) return 2;
+    return Math.max(0, Math.min(10, Math.floor(raw)));
+  }
+
+  private resolveMaxCharsPerSkill(): number {
+    const raw = this.config.skills?.maxCharsPerSkill;
+    if (!raw || Number.isNaN(raw)) return 2_000;
+    return Math.max(300, Math.min(20_000, Math.floor(raw)));
+  }
 }
 
 function truncateToBytes(value: string, maxBytes: number): string {
@@ -374,4 +428,21 @@ async function runWithTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promi
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n\n[TRUNCATED SKILL CONTENT TO ${maxChars} CHARS]`;
+}
+
+function uniqueByName(skills: SkillDefinition[]): SkillDefinition[] {
+  const seen = new Set<string>();
+  const result: SkillDefinition[] = [];
+  for (const skill of skills) {
+    const key = skill.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(skill);
+  }
+  return result;
 }

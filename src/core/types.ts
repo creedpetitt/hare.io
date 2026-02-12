@@ -36,6 +36,12 @@ export interface SkillDefinition {
   location: string;
 }
 
+export interface SkillRuntimeConfig {
+  autoActivate?: boolean;
+  maxActive?: number;
+  maxCharsPerSkill?: number;
+}
+
 export type ToolProfile = 'minimal' | 'coding' | 'messaging' | 'full';
 
 export interface ToolConfig {
@@ -53,6 +59,7 @@ export interface AgentConfig {
   compactionThreshold: number;
   compactionKeep: number;
   bootstrapMaxChars?: number;
+  skills?: SkillRuntimeConfig;
   tools?: ToolConfig;
   toolPolicy?: ToolPolicyConfig;
 }

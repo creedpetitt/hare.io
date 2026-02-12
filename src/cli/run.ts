@@ -25,6 +25,7 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
         debug: process.env.DEBUG === 'true',
         tools: options.profile ? { profile: options.profile as any } : undefined,
         bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
+        skills: config.agents?.defaults?.skills,
       },
       options.onStream
         ? {

@@ -375,6 +375,7 @@ async function handleAgentRequest(
           debug: process.env.DEBUG === 'true',
           tools: params.profile ? { profile: params.profile as any } : undefined,
           bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
+          skills: config.agents?.defaults?.skills,
         },
         {
           runId,
