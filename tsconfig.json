@@ -25,7 +25,10 @@
     "paths": {
       "@core/*": ["src/core/*"],
       "@tools/*": ["src/tools/*"],
-      "@utils/*": ["src/utils/*"]
+      "@utils/*": ["src/utils/*"],
+      "@cli/*": ["src/cli/*"],
+      "@channels/*": ["src/channels/*"],
+      "@gateway/*": ["src/gateway/*"]
     }
   },
   "include": ["src/**/*"],
