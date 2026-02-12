@@ -4,48 +4,61 @@ export type ParsedArgs = {
   local: boolean;
   command: string;
   commandArgs: string[];
-  section?: string;
+};
+
+const VALUE_FLAGS: Record<string, keyof Pick<ParsedArgs, 'agentId' | 'profile'>> = {
+  '--agent': 'agentId',
+  '-a': 'agentId',
+  '--profile': 'profile',
+  '-p': 'profile',
+};
+
+const BOOL_FLAGS: Record<string, keyof Pick<ParsedArgs, 'local'>> = {
+  '--local': 'local',
 };
 
 export function parseArgs(): ParsedArgs {
-  const args = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+
   let agentId = 'main';
-  let profile = undefined;
+  let profile: string | undefined = undefined;
   let local = false;
-  let section = undefined;
-  let command = '';
-  let commandArgs: string[] = [];
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--agent' || args[i] === '-a') {
-      if (args[i + 1]) {
-        agentId = args[i + 1];
-        args.splice(i, 2);
-        i--;
-      }
-    } else if (args[i] === '--local') {
-      local = true;
-      args.splice(i, 1);
-      i--;
-    } else if (args[i] === '--profile' || args[i] === '-p') {
-      if (args[i + 1]) {
-        profile = args[i + 1];
-        args.splice(i, 2);
-        i--;
-      }
-    } else if (args[i] === '--section') {
-      if (args[i + 1]) {
-        section = args[i + 1];
-        args.splice(i, 2);
-        i--;
-      }
+  let i = 0;
+
+  while (i < argv.length) {
+    const token = argv[i];
+
+    if (token === '--') {
+      i++;
+      break;
     }
+
+    if (token in BOOL_FLAGS) {
+      local = true;
+      i++;
+      continue;
+    }
+
+    if (token in VALUE_FLAGS) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('-')) {
+        break;
+      }
+      const key = VALUE_FLAGS[token];
+      if (key === 'agentId') agentId = next;
+      else if (key === 'profile') profile = next;
+      i += 2;
+      continue;
+    }
+
+    break;
   }
 
-  if (args.length > 0) {
-    command = args[0];
-    commandArgs = args.slice(1);
-  }
+  // everything remaining is command payload
+  const remaining = argv.slice(i);
+  const command = remaining[0] ?? '';
+  const commandArgs = remaining.slice(1);
 
-  return { agentId, profile, local, command, commandArgs, section };
+  return { agentId, profile, local, command, commandArgs };
 }

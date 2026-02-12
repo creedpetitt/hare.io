@@ -1,11 +1,12 @@
-import crypto from 'crypto';
-import { TelegramChannel } from '../channels/telegram.js';
-import { loadConfig, saveConfig } from '../core/config.js';
-import { runPrompt } from './run.js';
+import { TelegramChannel } from '@channels/telegram.js';
+import { loadConfig, saveConfig } from '@core/config.js';
+import { runPrompt } from '@cli/run.js';
+import { PAIRING_TIMEOUT_MS, generatePairingCode, parseSendArgs } from '@cli/channels/shared.js';
 
-const PAIRING_TIMEOUT_MS = 5 * 60 * 1000;
-
-export async function runTelegramCommand(commandArgs: string[], options: { local: boolean }) {
+export async function runTelegramCommand(
+  commandArgs: string[],
+  options: { local: boolean }
+): Promise<boolean> {
   const subcommand = commandArgs[0];
   if (!subcommand) {
     printTelegramUsage();
@@ -56,7 +57,7 @@ export async function runTelegramCommand(commandArgs: string[], options: { local
 
 async function createTelegramChannel(
   onMessage: (text: string) => Promise<string>,
-  local: boolean
+  _local: boolean
 ) {
   const config = await loadConfig();
   const token = config.channels?.telegram?.botToken || process.env.TELEGRAM_BOT_TOKEN;
@@ -133,34 +134,11 @@ async function storeAllowFrom(userId: string): Promise<void> {
   await saveConfig(config);
 }
 
-function generatePairingCode(): string {
-  return crypto.randomBytes(3).toString('hex');
-}
-
 async function printTelegramStatus() {
   const config = await loadConfig();
   const token = config.channels?.telegram?.botToken || process.env.TELEGRAM_BOT_TOKEN;
   const enabled = Boolean(token) && (config.channels?.telegram?.enabled ?? true);
   console.log(`telegram: ${enabled ? 'configured' : 'not configured'}`);
-}
-
-function parseSendArgs(args: string[]) {
-  let to: string | undefined;
-  let message: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const token = args[i];
-    if (token === '--to' && args[i + 1]) {
-      to = args[i + 1];
-      i++;
-      continue;
-    }
-    if (token === '--message' && args[i + 1]) {
-      message = args[i + 1];
-      i++;
-      continue;
-    }
-  }
-  return { to, message };
 }
 
 function printTelegramUsage() {

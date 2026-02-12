@@ -1,11 +1,17 @@
-import crypto from 'crypto';
-import { DiscordChannel } from '../channels/discord.js';
-import { loadConfig, saveConfig } from '../core/config.js';
-import { runPrompt } from './run.js';
+import { DiscordChannel } from '@channels/discord.js';
+import { loadConfig, saveConfig } from '@core/config.js';
+import { runPrompt } from '@cli/run.js';
+import {
+  PAIRING_TIMEOUT_MS,
+  generatePairingCode,
+  parseSendArgs,
+  waitForShutdown,
+} from '@cli/channels/shared.js';
 
-const PAIRING_TIMEOUT_MS = 5 * 60 * 1000;
-
-export async function runDiscordCommand(commandArgs: string[], options: { local: boolean }) {
+export async function runDiscordCommand(
+  commandArgs: string[],
+  options: { local: boolean }
+): Promise<boolean> {
   const subcommand = commandArgs[0];
   if (!subcommand) {
     printDiscordUsage();
@@ -57,7 +63,10 @@ export async function runDiscordCommand(commandArgs: string[], options: { local:
   return true;
 }
 
-async function createDiscordChannel(onMessage: (text: string) => Promise<string>, _local: boolean) {
+async function createDiscordChannel(
+  onMessage: (text: string) => Promise<string>,
+  _local: boolean
+) {
   const config = await loadConfig();
   const token = config.channels?.discord?.botToken || process.env.DISCORD_BOT_TOKEN;
   if (!token) {
@@ -141,10 +150,6 @@ async function storeAllowFrom(userId: string): Promise<void> {
   await saveConfig(config);
 }
 
-function generatePairingCode(): string {
-  return crypto.randomBytes(3).toString('hex');
-}
-
 async function printDiscordStatus() {
   const config = await loadConfig();
   const token = config.channels?.discord?.botToken || process.env.DISCORD_BOT_TOKEN;
@@ -152,36 +157,6 @@ async function printDiscordStatus() {
   console.log(`discord: ${enabled ? 'configured' : 'not configured'}`);
 }
 
-function parseSendArgs(args: string[]) {
-  let to: string | undefined;
-  let message: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const token = args[i];
-    if (token === '--to' && args[i + 1]) {
-      to = args[i + 1];
-      i++;
-      continue;
-    }
-    if (token === '--message' && args[i + 1]) {
-      message = args[i + 1];
-      i++;
-      continue;
-    }
-  }
-  return { to, message };
-}
-
 function printDiscordUsage() {
   console.log(`\nDiscord commands:\n  hare discord status\n  hare discord start\n  hare discord allow-me\n  hare discord send --to <userId> --message \"text\"\n`);
-}
-
-function waitForShutdown(onShutdown: () => Promise<void>): Promise<void> {
-  return new Promise((resolve) => {
-    const handler = async () => {
-      await onShutdown();
-      resolve();
-    };
-    process.once('SIGINT', handler);
-    process.once('SIGTERM', handler);
-  });
 }

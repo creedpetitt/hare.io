@@ -1,7 +1,7 @@
-import { Agent } from '../core/Agent.js';
-import { getConfiguredLLM } from '../core/llm/getLLM.js';
-import { loadConfig } from '../core/config.js';
-import { GatewayClient } from '../gateway/client.js';
+import { Agent } from '@core/Agent.js';
+import { getConfiguredLLM } from '@core/llm/getLLM.js';
+import { loadConfig } from '@core/config.js';
+import { GatewayClient } from '@gateway/client.js';
 
 export type RunPromptOptions = {
   agentId: string;
@@ -16,12 +16,24 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
   if (options.local) {
     const { llm, model } = await getConfiguredLLM();
     const config = await loadConfig();
-    const agent = new Agent('main', llm, options.agentId, {
-      model,
-      debug: process.env.DEBUG === 'true',
-      tools: options.profile ? { profile: options.profile as any } : undefined,
-      bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
-    });
+    const agent = new Agent(
+      options.agentId,
+      llm,
+      options.agentId,
+      {
+        model,
+        debug: process.env.DEBUG === 'true',
+        tools: options.profile ? { profile: options.profile as any } : undefined,
+        bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
+      },
+      options.onStream
+        ? {
+            assistantObserver: {
+              onAssistantDelta: (_runId, delta) => options.onStream?.(delta),
+            },
+          }
+        : undefined
+    );
     return agent.run(prompt);
   }
 

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { ensureAuthenticated, ensureAuthenticatedNonInteractive } from './setup.js';
-import { handleGatewayCommand, isGatewayReady } from './gateway.js';
+import { ensureAuthenticated, ensureAuthenticatedNonInteractive } from '@cli/setup/index.js';
+import { handleGatewayCommand, isGatewayReady } from '@cli/gateway/index.js';
 
 export type OnboardOptions = {
   skipGateway?: boolean;
