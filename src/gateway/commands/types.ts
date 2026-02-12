@@ -15,5 +15,4 @@ export type CommandContext = {
 export type ActiveModel = {
   provider: ProviderId;
   model: string;
-  isSessionOverride: boolean;
 };

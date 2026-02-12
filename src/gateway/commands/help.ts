@@ -5,7 +5,7 @@ export function runHelpCommand(): string {
     '/status               Show current session/model status',
     '/skills               List available skills for this agent',
     '/models               List curated model catalog',
-    '/model <value>        Set session model override (index, alias, or provider/model)',
-    '/model clear          Clear session model override',
+    '/model <value>        Set default model (index, alias, or provider/model)',
+    '/model clear          Clear default provider selection',
   ].join('\n');
 }

@@ -3,6 +3,7 @@ import {
   DEFAULT_OPENAI_MODEL,
   DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_GEMINI_MODEL,
+  type ProviderId,
 } from '../config.js';
 import { OpenAIProvider } from './OpenAIProvider.js';
 import { AnthropicProvider } from './AnthropicProvider.js';
@@ -14,10 +15,23 @@ export type GetLLMOptions = {
   errorMessage?: string;
 };
 
+function defaultModelForProvider(provider: ProviderId): string {
+  if (provider === 'openai') return DEFAULT_OPENAI_MODEL;
+  if (provider === 'anthropic') return DEFAULT_ANTHROPIC_MODEL;
+  return DEFAULT_GEMINI_MODEL;
+}
+
+function buildProvider(provider: ProviderId, apiKey: string, model: string, apiVersion?: string): LLMProvider {
+  if (provider === 'openai') return new OpenAIProvider(apiKey, model);
+  if (provider === 'anthropic') return new AnthropicProvider(apiKey, model);
+  return new GeminiProvider(apiKey, model, apiVersion);
+}
+
 export async function getConfiguredLLM(
   options: GetLLMOptions = {}
 ): Promise<{ llm: LLMProvider; model: string }> {
   const config = await loadConfig();
+
   const preferred = config.defaults?.provider;
   if (preferred) {
     const preferredConfig = config.providers?.[preferred];
@@ -26,35 +40,25 @@ export async function getConfiguredLLM(
       error.code = options.errorCode || 'missing_api_key';
       throw error;
     }
-    const model =
-      preferred === 'openai'
-        ? preferredConfig.model || DEFAULT_OPENAI_MODEL
-        : preferred === 'anthropic'
-          ? preferredConfig.model || DEFAULT_ANTHROPIC_MODEL
-          : preferredConfig.model || DEFAULT_GEMINI_MODEL;
-    const llm =
-      preferred === 'openai'
-        ? new OpenAIProvider(preferredConfig.apiKey, model)
-        : preferred === 'anthropic'
-          ? new AnthropicProvider(preferredConfig.apiKey, model)
-          : new GeminiProvider(preferredConfig.apiKey, model, preferredConfig.apiVersion);
+    const model = preferredConfig.model || defaultModelForProvider(preferred);
+    const llm = buildProvider(preferred, preferredConfig.apiKey, model, preferredConfig.apiVersion);
     return { llm, model };
   }
 
   const openaiConfig = config.providers?.openai;
   if (openaiConfig?.apiKey) {
-    const model = openaiConfig.model || DEFAULT_OPENAI_MODEL;
-    return { llm: new OpenAIProvider(openaiConfig.apiKey, model), model };
+    const model = openaiConfig.model || defaultModelForProvider('openai');
+    return { llm: buildProvider('openai', openaiConfig.apiKey, model), model };
   }
   const anthropicConfig = config.providers?.anthropic;
   if (anthropicConfig?.apiKey) {
-    const model = anthropicConfig.model || DEFAULT_ANTHROPIC_MODEL;
-    return { llm: new AnthropicProvider(anthropicConfig.apiKey, model), model };
+    const model = anthropicConfig.model || defaultModelForProvider('anthropic');
+    return { llm: buildProvider('anthropic', anthropicConfig.apiKey, model), model };
   }
   const geminiConfig = config.providers?.gemini;
   if (geminiConfig?.apiKey) {
-    const model = geminiConfig.model || DEFAULT_GEMINI_MODEL;
-    return { llm: new GeminiProvider(geminiConfig.apiKey, model, geminiConfig.apiVersion), model };
+    const model = geminiConfig.model || defaultModelForProvider('gemini');
+    return { llm: buildProvider('gemini', geminiConfig.apiKey, model, geminiConfig.apiVersion), model };
   }
 
   const error: any = new Error(options.errorMessage || 'No API Key found after auth check.');

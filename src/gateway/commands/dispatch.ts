@@ -18,10 +18,10 @@ export async function dispatchGatewayCommand(
     return runSkillsCommand(context.agentId);
   }
   if (command.name === 'models') {
-    return runModelsCommand(context);
+    return runModelsCommand();
   }
   if (command.name === 'model') {
-    return runModelCommand(context, command.rawArgs);
+    return runModelCommand(command.rawArgs);
   }
 
   return `Unknown slash command: /${command.name}\nTry /help`;

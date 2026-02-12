@@ -25,6 +25,8 @@ import { readIdempotency, storeIdempotency } from './idempotency.js';
 import { buildResponse, sendResponse, sendEvent, sendError } from './responses.js';
 import { startTelegramChannel, stopTelegramChannel } from './channels/telegram.js';
 import { startDiscordChannel, stopDiscordChannel } from './channels/discord.js';
+import { parseStandaloneSlashCommand } from './commands/parse.js';
+import { dispatchGatewayCommand } from './commands/dispatch.js';
 
 type ConnectionState = {
   connected: boolean;
@@ -345,13 +347,26 @@ async function handleAgentRequest(
 
   try {
     const params = request.params;
+    const sessionId = params.sessionId || 'main';
+    const agentId = params.agentId || 'main';
+    const parsedCommand = parseStandaloneSlashCommand(params.input);
+    if (parsedCommand) {
+      const summary = await dispatchGatewayCommand(parsedCommand, {
+        agentId,
+        sessionId,
+        profile: params.profile,
+      });
+      const response = buildResponse(request.id, true, { runId, status: 'ok', summary });
+      sendResponse(socket, response);
+      storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+      return;
+    }
+
     const { llm, model } = await getConfiguredLLM({
       errorCode: 'unconfigured',
       errorMessage: 'No API Key configured for OpenAI or Anthropic.',
     });
     const config = await loadConfig();
-    const sessionId = params.sessionId || 'main';
-    const agentId = params.agentId || 'main';
     const activeRun = registerActiveRun({ runId, sessionId, agentId, queuedAt });
 
     await getOrCreateSessionLane(sessionId).enqueue(async () => {
