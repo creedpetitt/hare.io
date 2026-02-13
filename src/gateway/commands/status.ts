@@ -9,13 +9,17 @@ export async function runStatusCommand(context: CommandContext): Promise<string>
 
   const builder = new ContextBuilder(undefined, context.agentId);
   await builder.init();
-  const skills = await builder.loadSkills(200);
+  const catalog = await builder.loadSkillCatalog(200);
+  const availableSkills = catalog.filter((skill) => skill.available);
+  const unavailableCount = Math.max(0, catalog.length - availableSkills.length);
 
   const lines = ['Gateway status:'];
   lines.push(`agent: ${context.agentId}`);
   lines.push(`session: ${context.sessionId}`);
   lines.push(`profile: ${context.profile || 'default'}`);
-  lines.push(`skills: ${skills.length}`);
+  lines.push(
+    `skills: ${availableSkills.length} available${unavailableCount > 0 ? ` (${unavailableCount} unavailable)` : ''}`
+  );
   if (activeModel) {
     lines.push(`model: ${activeModel.provider}/${activeModel.model}`);
   } else {

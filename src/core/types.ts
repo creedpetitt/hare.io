@@ -33,6 +33,11 @@ export interface SkillDefinition {
   description: string;
   content: string;
   location: string;
+  source?: 'workspace' | 'builtin';
+  available?: boolean;
+  missingRequires?: string[];
+  metadata?: Record<string, unknown>;
+  always?: boolean;
 }
 
 export interface SkillRuntimeConfig {
@@ -55,6 +60,7 @@ export interface AgentConfig {
   workspacePath: string;
   model: string;
   debug: boolean;
+  maxToolIterations?: number;
   compactionThreshold: number;
   compactionKeep: number;
   bootstrapMaxChars?: number;

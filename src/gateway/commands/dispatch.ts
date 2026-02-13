@@ -17,6 +17,9 @@ export async function dispatchGatewayCommand(
   if (command.name === 'skills') {
     return runSkillsCommand(context.agentId);
   }
+  if (command.name === 'skill') {
+    return 'Usage: /skill <name> [input]\nRuns a normal agent turn with the named skill forced active.';
+  }
   if (command.name === 'models') {
     return runModelsCommand();
   }

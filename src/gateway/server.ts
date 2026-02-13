@@ -27,6 +27,7 @@ import { startTelegramChannel, stopTelegramChannel } from './channels/telegram.j
 import { startDiscordChannel, stopDiscordChannel } from './channels/discord.js';
 import { parseStandaloneSlashCommand } from './commands/parse.js';
 import { dispatchGatewayCommand } from './commands/dispatch.js';
+import { resolveSkillInvocation } from './commands/skill.js';
 
 type ConnectionState = {
   connected: boolean;
@@ -39,7 +40,7 @@ const DEFAULT_PORT = 18789;
 const DEFAULT_TICK_INTERVAL_MS = 15000;
 const DEFAULT_MAX_PAYLOAD_BYTES = 2_000_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
-const AGENT_TIMEOUT_MS = 120_000;
+const AGENT_TIMEOUT_MS = 30_000;
 const REQUEST_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
 const IDEMPOTENCY_TTL_MS = 120_000;
@@ -350,7 +351,15 @@ async function handleAgentRequest(
     const sessionId = params.sessionId || 'main';
     const agentId = params.agentId || 'main';
     const parsedCommand = parseStandaloneSlashCommand(params.input);
-    if (parsedCommand) {
+    let input = params.input;
+    let forcedSkills: string[] = [];
+    let toolConfigOverride:
+      | {
+          profile?: any;
+          allow?: string[];
+        }
+      | undefined;
+    if (parsedCommand && parsedCommand.name !== 'skill') {
       const summary = await dispatchGatewayCommand(parsedCommand, {
         agentId,
         sessionId,
@@ -360,6 +369,27 @@ async function handleAgentRequest(
       sendResponse(socket, response);
       storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
       return;
+    }
+    if (parsedCommand?.name === 'skill') {
+      const resolved = await resolveSkillInvocation(agentId, parsedCommand.rawArgs);
+      if (!resolved.ok) {
+        const response = buildResponse(request.id, true, {
+          runId,
+          status: 'ok',
+          summary: resolved.message,
+        });
+        sendResponse(socket, response);
+        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+        return;
+      }
+      input = resolved.input;
+      forcedSkills = resolved.forcedSkills;
+      if (!params.profile && resolved.toolOverride) {
+        toolConfigOverride = {
+          profile: resolved.toolOverride.profile as any,
+          allow: resolved.toolOverride.allow,
+        };
+      }
     }
 
     const { llm, model } = await getConfiguredLLM({
@@ -388,7 +418,8 @@ async function handleAgentRequest(
         {
           model,
           debug: process.env.DEBUG === 'true',
-          tools: params.profile ? { profile: params.profile as any } : undefined,
+          tools: toolConfigOverride || (params.profile ? { profile: params.profile as any } : undefined),
+          maxToolIterations: config.agents?.defaults?.maxToolIterations,
           bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
           skills: config.agents?.defaults?.skills,
         },
@@ -426,7 +457,7 @@ async function handleAgentRequest(
       );
 
       try {
-        const result = await runWithTimeout(agent.run(params.input), AGENT_TIMEOUT_MS);
+        const result = await runWithTimeout(agent.run(input, { forcedSkills }), AGENT_TIMEOUT_MS);
         const endedAt = Date.now();
         streamEmitter.finalize(runId);
         emitAgentLifecycle(socket, {

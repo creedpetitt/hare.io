@@ -93,12 +93,18 @@ export class Agent {
       const sanitizedHistory = sanitizeHistory(context.history);
       if (
         sanitizedHistory.droppedInvalidTools > 0 ||
-        sanitizedHistory.normalizedAssistantContent > 0
+        sanitizedHistory.normalizedAssistantContent > 0 ||
+        sanitizedHistory.removedDanglingToolCalls > 0
       ) {
         if (this.config.debug) {
           if (sanitizedHistory.normalizedAssistantContent > 0) {
             console.warn(
               `[HISTORY] Normalized ${sanitizedHistory.normalizedAssistantContent} assistant message(s) with null content before model call.`
+            );
+          }
+          if (sanitizedHistory.removedDanglingToolCalls > 0) {
+            console.warn(
+              `[HISTORY] Removed ${sanitizedHistory.removedDanglingToolCalls} dangling assistant tool_call message(s) before model call.`
             );
           }
           if (sanitizedHistory.droppedInvalidTools > 0) {
@@ -121,13 +127,12 @@ export class Agent {
         this.abortController ? { abortSignal: this.abortController.signal } : undefined
       );
 
-      await this.processAssistantResponse(response, context);
-
       const responseText = (response.content ?? '').trim();
       if (responseText) {
         finalAnswer = responseText;
       }
       if (!response.toolCalls?.length) {
+        await this.processAssistantResponse(response, context);
         if (!finalAnswer) {
           finalAnswer = 'I completed the request, but have no additional response text.';
         }
@@ -135,10 +140,18 @@ export class Agent {
       }
 
       if (toolIterations >= maxToolIterations) {
+        await this.processAssistantResponse(
+          {
+            ...response,
+            toolCalls: undefined,
+          },
+          context
+        );
         stoppedByToolLimit = true;
         break;
       }
 
+      await this.processAssistantResponse(response, context);
       await this.executeTools(response.toolCalls, context);
       toolIterations += 1;
     }
