@@ -68,7 +68,6 @@ export interface AgentContext {
   history: Message[];
   files: BootstrapFiles;
   memoryFacts: string;
-  historySummary: string;
   skills: SkillDefinition[];
 }
 

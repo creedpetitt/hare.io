@@ -119,10 +119,16 @@ export class Agent {
 
       await this.processAssistantResponse(response, context);
 
-      if (response.content) {
-        finalAnswer = response.content;
+      const responseText = (response.content ?? '').trim();
+      if (responseText) {
+        finalAnswer = responseText;
       }
-      if (!response.toolCalls?.length) break;
+      if (!response.toolCalls?.length) {
+        if (!finalAnswer) {
+          finalAnswer = 'I completed the request, but have no additional response text.';
+        }
+        break;
+      }
 
       await this.executeTools(response.toolCalls, context);
     }
@@ -151,18 +157,17 @@ export class Agent {
     const toCompact = context.history.slice(0, -keepCount);
     if (toCompact.length === 0) return;
 
-    const result = await this.compactor.compact(toCompact);
-    const summary = result.summary.trim();
-    if (summary) {
-      const historyEntry = formatHistoryEntry(this.sessionId, summary);
+    const currentMemory = await this.contextBuilder.loadMemorySnapshot();
+    const result = await this.compactor.compact(toCompact, currentMemory, this.sessionId);
+    const historySummary = result.historyEntry.trim();
+    if (historySummary) {
+      const historyEntry = formatHistoryEntry(this.sessionId, historySummary);
       await this.contextBuilder.appendHistoryEntry(historyEntry);
-      context.historySummary = await this.contextBuilder.loadHistorySummary(
-        this.config.bootstrapMaxChars ?? 20_000
-      );
     }
 
-    await this.contextBuilder.upsertMemoryFacts(result.newFacts);
-    if (result.newFacts.length > 0) {
+    const nextMemory = result.memoryUpdate.trim();
+    if (nextMemory.length > 0 && nextMemory !== currentMemory.trim()) {
+      await this.contextBuilder.writeMemorySnapshot(nextMemory);
       context.memoryFacts = await this.contextBuilder.loadMemoryFacts(
         this.config.bootstrapMaxChars ?? 20_000
       );
@@ -179,15 +184,11 @@ export class Agent {
   }
 
   private async processAssistantResponse(response: LLMResponse, context: AgentContext) {
-    let content = response.content ?? '';
-
-    if (content) {
-      content = await this.extractAndSaveMemories(content);
-    }
+    const content = response.content ?? '';
 
     const assistantMsg: Message = {
       role: 'assistant',
-      content: content ?? '',
+      content,
       tool_calls: response.toolCalls,
       timestamp: Date.now(),
     };
@@ -272,22 +273,6 @@ export class Agent {
     }
   }
 
-  private async extractAndSaveMemories(content: string): Promise<string> {
-    const memoryPattern = /\[\[MEMORY:\s*(.+?)\]\]/g;
-    const extractedFacts: string[] = [];
-    let match;
-    while ((match = memoryPattern.exec(content)) !== null) {
-      const fact = match[1].trim();
-      if (!fact) continue;
-      extractedFacts.push(fact);
-      if (this.config.debug) console.log(`[MEMORY] ${fact}`);
-    }
-    if (extractedFacts.length > 0) {
-      await this.contextBuilder.upsertMemoryFacts(extractedFacts);
-    }
-    return content.replace(memoryPattern, '').trim();
-  }
-
   private constructSystemPrompt(context: AgentContext, activeSkills: SkillDefinition[]): string {
     const toolsPrompt =
       this.tools.length > 0
@@ -331,16 +316,15 @@ export class Agent {
       '=== PERSISTENT MEMORY ===',
       context.memoryFacts || 'No saved memory facts yet.',
       '',
-      '=== MEMORY PROTOCOL ===',
-      'To save a permanent fact, use: [[MEMORY: fact]]',
-      'To retrieve older compacted context, use the search_history tool.',
+      '=== MEMORY GUIDELINES ===',
+      'Long-term facts are managed by compaction; do not emit memory tags in replies.',
+      'If the user asks about earlier conversation/history/decisions, call search_history before answering.',
+      'Use search_history to retrieve older compacted context on demand.',
+      'Do not claim memory was saved unless memory was actually written by a tool or runtime.',
       '',
       '=== TOOL RESPONSE FORMAT ===',
       'Tool responses are JSON with fields: toolName, success, result, error.',
       'error is null or { code, message, details }.',
-      '',
-      '=== COMPACTED HISTORY LOG ===',
-      context.historySummary || 'No compacted history yet.',
       '',
       '=== AVAILABLE SKILLS ===',
       skillsPrompt,

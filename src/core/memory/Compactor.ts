@@ -2,8 +2,8 @@ import { LLMProvider, LLMResponse } from '../llm/LLMProvider.js';
 import { Message } from '../types.js';
 
 export interface CompactionResult {
-  summary: string;
-  newFacts: string[];
+  historyEntry: string;
+  memoryUpdate: string;
 }
 
 export class Compactor {
@@ -13,65 +13,73 @@ export class Compactor {
     this.llm = llm;
   }
 
-  async compact(messages: Message[]): Promise<CompactionResult> {
-    const systemPrompt = `You are a memory manager. Your job is to:
-1. Summarize the conversation history.
-2. Extract new, permanent facts about the user or project.
+  async compact(
+    messages: Message[],
+    currentMemory: string,
+    sessionId: string
+  ): Promise<CompactionResult> {
+    const systemPrompt = `You are a memory consolidation agent.
 
-=== INSTRUCTIONS ===
-- Output MUST be in the following specific format:
----SUMMARY---
-<bullet points of the conversation summary>
----FACTS---
-<bullet points of NEW facts to memorize (if any)>
-<e.g. - User's name is Dave>
-<e.g. - Project uses TypeScript>
+Return ONLY valid JSON with exactly two top-level keys:
+- "history_entry": short paragraph summary of archived conversation details.
+- "memory_update": full updated MEMORY.md content (not a diff).
 
-- If no new facts are found, leave the ---FACTS--- section empty.
-- Keep the summary concise.
-`;
+Rules:
+- Keep history_entry concise and useful for future grep/search.
+- memory_update must remain valid markdown.
+- Prefer durable user/project facts and remove stale contradictions.
+- Do NOT include placeholders (None, N/A, Unknown).
+- Do NOT include transient formatting requests or repetitive turn chatter.`;
 
     const conversationText = messages
-      .map((msg) => `${msg.role.toUpperCase()}: ${msg.content}`)
+      .map((msg) => `${msg.role.toUpperCase()}: ${msg.content ?? ''}`)
       .join('\n\n');
-
-    const summaryRequest: Message[] = [
+    const prompt = [
+      `Session: ${sessionId}`,
+      '',
+      '=== Current MEMORY.md ===',
+      currentMemory || '# Persistent Memory\n\n## Facts\n',
+      '',
+      '=== Archived Conversation ===',
+      conversationText || '(empty)',
+    ].join('\n');
+    const request: Message[] = [
       {
         role: 'user',
-        content: conversationText,
+        content: prompt,
         timestamp: Date.now(),
       },
     ];
 
-    const response = await this.llm.generate(systemPrompt, summaryRequest);
-    return this.parseResponse(response);
+    const response = await this.llm.generate(systemPrompt, request);
+    return this.parseResponse(response, currentMemory);
   }
 
-  private parseResponse(response: LLMResponse): CompactionResult {
-    const text = response.content || '';
-    const summaryMarker = '---SUMMARY---';
-    const factsMarker = '---FACTS---';
-
-    let summary = '';
-    let facts: string[] = [];
-
-    const summaryIndex = text.indexOf(summaryMarker);
-    const factsIndex = text.indexOf(factsMarker);
-
-    if (summaryIndex !== -1 && factsIndex !== -1) {
-      summary = text.substring(summaryIndex + summaryMarker.length, factsIndex).trim();
-      const factsText = text.substring(factsIndex + factsMarker.length).trim();
-      facts = factsText
-        .split('\n')
-        .map((line) => line.replace(/^-\s*/, '').trim())
-        .filter((line) => line.length > 0);
-    } else if (summaryIndex !== -1) {
-      summary = text.substring(summaryIndex + summaryMarker.length).trim();
-    } else {
-      // Fallback: Assume everything is summary
-      summary = text;
-    }
-
-    return { summary, newFacts: facts };
+  private parseResponse(response: LLMResponse, currentMemory: string): CompactionResult {
+    const raw = (response.content || '').trim();
+    const parsed = safeParseJson(stripCodeFence(raw));
+    const historyEntry = asString(parsed?.history_entry).trim() || raw;
+    const memoryUpdate = asString(parsed?.memory_update).trim() || currentMemory;
+    return { historyEntry, memoryUpdate };
   }
+}
+
+function stripCodeFence(value: string): string {
+  if (!value.startsWith('```')) return value;
+  const firstBreak = value.indexOf('\n');
+  const withoutOpen = firstBreak === -1 ? value : value.slice(firstBreak + 1);
+  const closeIndex = withoutOpen.lastIndexOf('```');
+  return closeIndex === -1 ? withoutOpen.trim() : withoutOpen.slice(0, closeIndex).trim();
+}
+
+function safeParseJson(value: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }

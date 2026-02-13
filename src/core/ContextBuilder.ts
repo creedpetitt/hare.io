@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import { AgentConfig, AgentContext, BootstrapFiles, Message, SkillDefinition } from './types.js';
 import { sanitizeHistory } from './history.js';
-import { formatMemoryFile, mergeMemoryFacts, parseMemoryFacts } from './memory/memoryHygiene.js';
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -259,11 +258,9 @@ When asked to clean up code:
     return truncateBootstrap('MEMORY.md', content, maxChars);
   }
 
-  async loadHistorySummary(maxChars: number = 20_000): Promise<string> {
-    const historyPath = this.getHistorySummaryPath();
-    const content = await readFileSafe(historyPath, '');
-    if (!content) return '';
-    return truncateBootstrap('HISTORY.md', content, maxChars);
+  async loadMemorySnapshot(): Promise<string> {
+    const memoryPath = this.getMemoryFactsPath();
+    return readFileSafe(memoryPath, '# Persistent Memory\n\n## Facts\n');
   }
 
   async appendHistoryEntry(entry: string): Promise<void> {
@@ -290,13 +287,11 @@ When asked to clean up code:
     await fs.writeFile(sessionPath, serialized, 'utf-8');
   }
 
-  async upsertMemoryFacts(facts: string[]): Promise<void> {
-    if (facts.length === 0) return;
+  async writeMemorySnapshot(content: string): Promise<void> {
     const memoryPath = this.getMemoryFactsPath();
-    const existing = await readFileSafe(memoryPath, '');
-    const existingFacts = parseMemoryFacts(existing);
-    const merged = mergeMemoryFacts(existingFacts, facts);
-    await fs.writeFile(memoryPath, formatMemoryFile(merged), 'utf-8');
+    const normalized = content.trim();
+    const snapshot = normalized.length > 0 ? `${normalized}\n` : '# Persistent Memory\n\n## Facts\n';
+    await fs.writeFile(memoryPath, snapshot, 'utf-8');
   }
 
   async build(sessionId: string, configOverride?: Partial<AgentConfig>): Promise<AgentContext> {
@@ -305,7 +300,6 @@ When asked to clean up code:
     const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
     const memoryFacts = await this.loadMemoryFacts(maxChars);
-    const historySummary = await this.loadHistorySummary(maxChars);
     const skills = await this.loadSkills(configOverride?.skills?.maxCharsPerSkill ?? 4_000);
 
     const config: AgentConfig = {
@@ -330,7 +324,7 @@ When asked to clean up code:
       ...configOverride,
     };
 
-    return { config, history, files, memoryFacts, historySummary, skills };
+    return { config, history, files, memoryFacts, skills };
   }
 
   private getMemoryFactsPath(): string {
