@@ -27,6 +27,8 @@
       "@tools/*": ["src/tools/*"],
       "@utils/*": ["src/utils/*"],
       "@cli/*": ["src/cli/*"],
+      "@runtime/*": ["src/runtime/*"],
+      "@tui/*": ["src/tui/*"],
       "@channels/*": ["src/channels/*"],
       "@gateway/*": ["src/gateway/*"]
     }
