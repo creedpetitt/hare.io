@@ -26,7 +26,18 @@ export async function startTelegramChannel(): Promise<void> {
   active = new TelegramChannel(
     { token, allowFrom, dmPolicy },
     {
-      onMessage: async (msg) => runChannelAgent(msg.text, { agentId: 'main', sessionId: 'main' }),
+      onMessage: async (msg) => {
+        try {
+          return await runChannelAgent(msg.text, {
+            agentId: 'main',
+            sessionId: `telegram:${msg.chatId}`,
+          });
+        } catch (error: any) {
+          const code = error?.code ? ` (${error.code})` : '';
+          console.log(`[telegram] agent run failed for chat=${msg.chatId}: ${error?.message || 'unknown error'}${code}`);
+          return "Sorry, I hit an internal error while processing your message. Please try again.";
+        }
+      },
       onLog: (line) => console.log(line),
     }
   );
