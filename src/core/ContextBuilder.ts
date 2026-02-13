@@ -229,8 +229,13 @@ When asked to clean up code:
       })
       .filter((msg): msg is Message => msg !== null);
 
-    const { messages, droppedInvalidTools } = sanitizeHistory(parsed);
-    if (droppedInvalidTools > 0) {
+    const { messages, droppedInvalidTools, normalizedAssistantContent } = sanitizeHistory(parsed);
+    if (droppedInvalidTools > 0 || normalizedAssistantContent > 0) {
+      if (normalizedAssistantContent > 0) {
+        console.warn(
+          `[ContextBuilder] Normalized ${normalizedAssistantContent} assistant message(s) with null content in session "${sessionId}".`
+        );
+      }
       console.warn(
         `[ContextBuilder] Dropped ${droppedInvalidTools} orphan tool message(s) from session "${sessionId}".`
       );

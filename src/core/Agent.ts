@@ -87,11 +87,21 @@ export class Agent {
     while (true) {
       this.throwIfAborted();
       const sanitizedHistory = sanitizeHistory(context.history);
-      if (sanitizedHistory.droppedInvalidTools > 0) {
+      if (
+        sanitizedHistory.droppedInvalidTools > 0 ||
+        sanitizedHistory.normalizedAssistantContent > 0
+      ) {
         if (this.config.debug) {
-          console.warn(
-            `[HISTORY] Dropped ${sanitizedHistory.droppedInvalidTools} orphan tool message(s) before model call.`
-          );
+          if (sanitizedHistory.normalizedAssistantContent > 0) {
+            console.warn(
+              `[HISTORY] Normalized ${sanitizedHistory.normalizedAssistantContent} assistant message(s) with null content before model call.`
+            );
+          }
+          if (sanitizedHistory.droppedInvalidTools > 0) {
+            console.warn(
+              `[HISTORY] Dropped ${sanitizedHistory.droppedInvalidTools} orphan tool message(s) before model call.`
+            );
+          }
         }
         context.history = sanitizedHistory.messages;
       }
@@ -169,7 +179,7 @@ export class Agent {
   }
 
   private async processAssistantResponse(response: LLMResponse, context: AgentContext) {
-    let content = response.content;
+    let content = response.content ?? '';
 
     if (content) {
       content = await this.extractAndSaveMemories(content);
@@ -177,7 +187,7 @@ export class Agent {
 
     const assistantMsg: Message = {
       role: 'assistant',
-      content,
+      content: content ?? '',
       tool_calls: response.toolCalls,
       timestamp: Date.now(),
     };

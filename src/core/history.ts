@@ -3,14 +3,25 @@ import type { Message } from './types.js';
 export type SanitizedHistory = {
   messages: Message[];
   droppedInvalidTools: number;
+  normalizedAssistantContent: number;
 };
 
 export function sanitizeHistory(messages: Message[]): SanitizedHistory {
   const sanitized: Message[] = [];
   let droppedInvalidTools = 0;
+  let normalizedAssistantContent = 0;
   let pendingToolCalls = new Set<string>();
 
-  for (const message of messages) {
+  for (const originalMessage of messages) {
+    let message = originalMessage;
+    if (message.role === 'assistant' && message.content === null) {
+      message = {
+        ...message,
+        content: '',
+      };
+      normalizedAssistantContent += 1;
+    }
+
     if (message.role === 'assistant') {
       sanitized.push(message);
       pendingToolCalls = new Set(
@@ -36,5 +47,5 @@ export function sanitizeHistory(messages: Message[]): SanitizedHistory {
     pendingToolCalls.clear();
   }
 
-  return { messages: sanitized, droppedInvalidTools };
+  return { messages: sanitized, droppedInvalidTools, normalizedAssistantContent };
 }

@@ -108,7 +108,7 @@ export class OpenAIProvider implements LLMProvider {
         });
 
         return {
-          content: content || null,
+          content: content || '',
           toolCalls: parsed as any,
         };
       }
@@ -134,13 +134,13 @@ export class OpenAIProvider implements LLMProvider {
       .filter((toolCall) => toolCall.function.name !== 'unknown_tool');
 
     return {
-      content: content || null,
+      content: content || '',
       toolCalls: parsedToolCalls.length > 0 ? (parsedToolCalls as any) : undefined,
     };
   }
 
   private mapMessage(m: Message, normalizeToolId?: (id: string) => string) {
-    const msg: any = { role: m.role, content: m.content };
+    const msg: any = { role: m.role, content: m.content ?? '' };
     if (m.name) msg.name = m.name;
     if (m.tool_calls) {
       msg.tool_calls = m.tool_calls.map((tc) => ({
