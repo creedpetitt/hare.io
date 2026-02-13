@@ -73,11 +73,14 @@ export class AnthropicProvider implements LLMProvider {
       }
     });
 
-    if (options?.abortSignal) {
-      if (options.abortSignal.aborted) {
+    const abortSignal = options?.abortSignal;
+    let onAbort: (() => void) | undefined;
+    if (abortSignal) {
+      if (abortSignal.aborted) {
         stream.abort();
       } else {
-        options.abortSignal.addEventListener('abort', () => stream.abort(), { once: true });
+        onAbort = () => stream.abort();
+        abortSignal.addEventListener('abort', onAbort);
       }
     }
 
@@ -90,6 +93,10 @@ export class AnthropicProvider implements LLMProvider {
         throw err;
       }
       throw error;
+    } finally {
+      if (abortSignal && onAbort) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
     }
 
     return {

@@ -20,6 +20,7 @@ export async function runChannelAgent(input: string, options: ChannelAgentOption
     model,
     debug: process.env.DEBUG === 'true',
     tools: options.profile ? { profile: options.profile as any } : undefined,
+    maxToolIterations: config.agents?.defaults?.maxToolIterations,
     bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
     skills: config.agents?.defaults?.skills,
   });

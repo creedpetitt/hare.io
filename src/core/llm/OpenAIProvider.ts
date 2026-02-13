@@ -48,11 +48,14 @@ export class OpenAIProvider implements LLMProvider {
       tools: openAITools?.length ? openAITools : undefined,
     });
 
-    if (options?.abortSignal) {
-      if (options.abortSignal.aborted) {
+    const abortSignal = options?.abortSignal;
+    let onAbort: (() => void) | undefined;
+    if (abortSignal) {
+      if (abortSignal.aborted) {
         stream.abort();
       } else {
-        options.abortSignal.addEventListener('abort', () => stream.abort(), { once: true });
+        onAbort = () => stream.abort();
+        abortSignal.addEventListener('abort', onAbort);
       }
     }
 
@@ -119,6 +122,10 @@ export class OpenAIProvider implements LLMProvider {
         throw err;
       }
       throw error;
+    } finally {
+      if (abortSignal && onAbort) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
     }
 
     const parsedToolCalls = Array.from(toolCalls.entries())

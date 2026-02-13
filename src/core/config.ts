@@ -47,6 +47,7 @@ export type AppConfig = {
   agents?: {
     defaults?: {
       bootstrapMaxChars?: number;
+      maxToolIterations?: number;
       skills?: {
         autoActivate?: boolean;
         maxActive?: number;

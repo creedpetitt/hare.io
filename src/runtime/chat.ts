@@ -8,6 +8,7 @@ export type RunPromptOptions = {
   gatewayUrl: string;
   gatewayToken?: string;
   onStream?: (delta: string) => void;
+  abortSignal?: AbortSignal;
 };
 
 export async function runPrompt(prompt: string, options: RunPromptOptions): Promise<string> {
@@ -37,8 +38,13 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
       sessionId,
       agentId: options.agentId,
       profile: options.profile,
-    });
+    }, { abortSignal: options.abortSignal });
   } catch (error: any) {
+    if (error?.code === 'agent_cancelled') {
+      const err: any = new Error('Agent run cancelled.');
+      err.code = 'agent_cancelled';
+      throw err;
+    }
     if (isGatewayUnavailable(error)) {
       throw new Error(
         `Gateway unavailable at ${options.gatewayUrl}. Run \`hare gateway status\`, then \`hare gateway start\` (or \`hare gateway foreground\`).`

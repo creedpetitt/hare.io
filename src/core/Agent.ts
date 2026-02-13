@@ -66,11 +66,12 @@ export class Agent {
       agentId,
       model: 'gpt-4o',
       debug: false,
+      maxToolIterations: 6,
       compactionThreshold: 20,
       compactionKeep: 10,
       toolPolicy: {
         defaults: {
-          timeoutMs: 30_000,
+          timeoutMs: 10_000,
           maxResultBytes: 1_000_000,
         },
       },
@@ -78,9 +79,12 @@ export class Agent {
     } as AgentConfig;
   }
 
-  async run(userInput: string): Promise<string> {
+  async run(userInput: string, options?: { forcedSkills?: string[] }): Promise<string> {
     const context = await this.prepareContext(userInput);
-    const activeSkills = this.selectActiveSkills(context.skills, []);
+    const activeSkills = await this.selectActiveSkills(context.skills, options?.forcedSkills ?? []);
+    const maxToolIterations = this.resolveMaxToolIterations();
+    let toolIterations = 0;
+    let stoppedByToolLimit = false;
     let finalAnswer = '';
     this.lastLoggedActiveSkills = '';
 
@@ -130,7 +134,24 @@ export class Agent {
         break;
       }
 
+      if (toolIterations >= maxToolIterations) {
+        stoppedByToolLimit = true;
+        break;
+      }
+
       await this.executeTools(response.toolCalls, context);
+      toolIterations += 1;
+    }
+
+    if (stoppedByToolLimit) {
+      if (this.config.debug) {
+        console.warn(
+          `[AGENT] Stopped run after ${maxToolIterations} tool iteration(s) to prevent a tool-call loop.`
+        );
+      }
+      finalAnswer =
+        `I stopped after ${maxToolIterations} tool steps to prevent a loop.` +
+        ' Please retry with a narrower prompt.';
     }
 
     return finalAnswer;
@@ -331,7 +352,7 @@ export class Agent {
       '',
       '=== SKILL ACTIVATION RULES ===',
       '- Treat skills as optional playbooks.',
-      '- Skills are activated only when explicitly provided by the chat client runtime.',
+      '- Skills are activated by runtime directives (for example, /skill) and always-enabled skill metadata.',
       '- If active skills are listed below, follow them unless they conflict with higher-priority rules.',
       '- Do not invent missing steps for a skill.',
       '',
@@ -401,22 +422,43 @@ export class Agent {
     }
   }
 
-  private selectActiveSkills(
+  private async selectActiveSkills(
     skills: SkillDefinition[],
     forcedSkillNames: string[]
-  ): SkillDefinition[] {
+  ): Promise<SkillDefinition[]> {
     const maxActive = this.resolveMaxActiveSkills();
-    if (maxActive <= 0 || skills.length === 0 || forcedSkillNames.length === 0) return [];
+    if (maxActive <= 0 || skills.length === 0) return [];
 
-    const requested = new Set(forcedSkillNames.map((name) => name.toLowerCase()));
-    const selected = skills.filter((skill) => requested.has(skill.name.toLowerCase()));
-    return uniqueByName(selected).slice(0, maxActive);
+    const availableByName = new Map<string, string>();
+    for (const skill of skills) {
+      availableByName.set(skill.name.toLowerCase(), skill.name);
+    }
+
+    const requested: string[] = [];
+    for (const name of forcedSkillNames) {
+      const normalized = availableByName.get(name.toLowerCase());
+      if (normalized) requested.push(normalized);
+    }
+    for (const skill of skills) {
+      if (skill.always) requested.push(skill.name);
+    }
+    if (requested.length === 0) return [];
+
+    const maxCharsPerSkill = this.resolveMaxCharsPerSkill();
+    const selectedNames = uniqueNames(requested).slice(0, maxActive);
+    return this.contextBuilder.loadSkillsForContext(selectedNames, maxCharsPerSkill);
   }
 
   private resolveMaxActiveSkills(): number {
     const raw = this.config.skills?.maxActive;
     if (!raw || Number.isNaN(raw)) return 2;
     return Math.max(0, Math.min(10, Math.floor(raw)));
+  }
+
+  private resolveMaxToolIterations(): number {
+    const raw = this.config.maxToolIterations;
+    if (!raw || Number.isNaN(raw)) return 6;
+    return Math.max(1, Math.min(20, Math.floor(raw)));
   }
 
   private resolveMaxCharsPerSkill(): number {
@@ -456,14 +498,14 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[TRUNCATED SKILL CONTENT TO ${maxChars} CHARS]`;
 }
 
-function uniqueByName(skills: SkillDefinition[]): SkillDefinition[] {
+function uniqueNames(values: string[]): string[] {
   const seen = new Set<string>();
-  const result: SkillDefinition[] = [];
-  for (const skill of skills) {
-    const key = skill.name.toLowerCase();
+  const result: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push(skill);
+    result.push(value);
   }
   return result;
 }

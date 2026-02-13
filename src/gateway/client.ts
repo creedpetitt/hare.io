@@ -40,13 +40,44 @@ export class GatewayClient {
     this.onStream = options.onStream;
   }
 
-  async runAgent(params: AgentParams): Promise<string> {
+  async runAgent(
+    params: AgentParams,
+    options?: {
+      abortSignal?: AbortSignal;
+    }
+  ): Promise<string> {
     const socket = new WebSocket(this.url);
+    let acceptedRunId: string | undefined;
+    const abortSignal = options?.abortSignal;
+    const abortError = () => {
+      const err: any = new Error('Agent run cancelled.');
+      err.code = 'agent_cancelled';
+      return err;
+    };
+    const cancelAcceptedRun = () => {
+      if (!acceptedRunId) return;
+      if (socket.readyState !== socket.OPEN) return;
+      this.sendFrame(socket, {
+        type: 'req',
+        id: crypto.randomUUID(),
+        method: 'cancel',
+        params: {
+          runId: acceptedRunId,
+          reason: 'operator_abort',
+        },
+      });
+    };
+    const onAbort = () => {
+      cancelAcceptedRun();
+      socket.close();
+    };
+
     try {
-      await this.waitForOpen(socket);
+      if (abortSignal?.aborted) throw abortError();
+      await this.waitForOpen(socket, abortSignal);
       await this.sendConnect(socket);
 
-      const connectResult = await this.waitForResponse(socket);
+      const connectResult = await this.waitForResponse(socket, undefined, abortSignal);
       if (!connectResult.ok) {
         throw new Error(connectResult.error?.message || 'Gateway connect failed.');
       }
@@ -62,10 +93,14 @@ export class GatewayClient {
       if (this.onStream) {
         this.listenForStreamEvents(socket, requestId);
       }
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
 
       let accepted = false;
       while (true) {
-        const response = await this.waitForResponse(socket, requestId);
+        if (abortSignal?.aborted) throw abortError();
+        const response = await this.waitForResponse(socket, requestId, abortSignal);
         if (!response.ok) {
           throw new Error(response.error?.message || 'Agent run failed.');
         }
@@ -77,6 +112,7 @@ export class GatewayClient {
 
         if (payload.status === 'accepted') {
           accepted = true;
+          acceptedRunId = payload.runId;
           continue;
         }
 
@@ -95,7 +131,15 @@ export class GatewayClient {
           throw new Error(payload.error?.message || 'Agent run cancelled.');
         }
       }
+    } catch (error: any) {
+      if (abortSignal?.aborted || error?.code === 'agent_cancelled') {
+        throw abortError();
+      }
+      throw error;
     } finally {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
       socket.close();
     }
   }
@@ -125,16 +169,54 @@ export class GatewayClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private waitForOpen(socket: WebSocket): Promise<void> {
+  private waitForOpen(socket: WebSocket, abortSignal?: AbortSignal): Promise<void> {
     if (socket.readyState === socket.OPEN) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      socket.once('open', () => resolve());
-      socket.once('error', reject);
+      const cleanup = () => {
+        socket.off('open', onOpen);
+        socket.off('error', onError);
+        if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+      };
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const onAbort = () => {
+        cleanup();
+        const err: any = new Error('Agent run cancelled.');
+        err.code = 'agent_cancelled';
+        reject(err);
+      };
+
+      socket.on('open', onOpen);
+      socket.on('error', onError);
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 
-  private waitForResponse(socket: WebSocket, expectedId?: string): Promise<GatewayResponse> {
+  private waitForResponse(
+    socket: WebSocket,
+    expectedId?: string,
+    abortSignal?: AbortSignal
+  ): Promise<GatewayResponse> {
     return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        socket.off('message', onMessage);
+        socket.off('error', onError);
+        socket.off('close', onClose);
+        if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+      };
+
       const onMessage = (raw: Buffer) => {
         let parsed: GatewayFrame;
         try {
@@ -146,19 +228,35 @@ export class GatewayClient {
         if (parsed.type !== 'res') return;
         if (expectedId && parsed.id !== expectedId) return;
 
-        socket.off('message', onMessage);
-        socket.off('error', onError);
+        cleanup();
         resolve(parsed as GatewayResponse);
       };
 
       const onError = (err: Error) => {
-        socket.off('message', onMessage);
-        socket.off('error', onError);
+        cleanup();
+        reject(err);
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('Gateway connection closed before response.'));
+      };
+      const onAbort = () => {
+        cleanup();
+        const err: any = new Error('Agent run cancelled.');
+        err.code = 'agent_cancelled';
         reject(err);
       };
 
       socket.on('message', onMessage);
       socket.on('error', onError);
+      socket.on('close', onClose);
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 

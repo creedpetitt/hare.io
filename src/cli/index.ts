@@ -5,6 +5,27 @@ import { ensureAuthenticated } from '@cli/setup/index.js';
 import { runPrompt } from '@runtime/chat.js';
 import { dispatch } from '@cli/commands/index.js';
 
+function isAgentCancelled(error: unknown): boolean {
+  const e = error as { code?: string; message?: string };
+  return e?.code === 'agent_cancelled' || String(e?.message || '').toLowerCase().includes('cancel');
+}
+
+async function runPromptWithInterrupt(prompt: string, options: Parameters<typeof runPrompt>[1]) {
+  const abortController = new AbortController();
+  const onSigint = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+  };
+
+  process.once('SIGINT', onSigint);
+  try {
+    return await runPrompt(prompt, { ...options, abortSignal: abortController.signal });
+  } finally {
+    process.off('SIGINT', onSigint);
+  }
+}
+
 async function main() {
   const args = parseArgs();
 
@@ -25,7 +46,7 @@ async function main() {
     const prompt = [args.command, ...args.commandArgs].join(' ');
     try {
       let streamed = false;
-      const response = await runPrompt(prompt, {
+      const response = await runPromptWithInterrupt(prompt, {
         agentId: args.agentId,
         profile: args.profile,
         gatewayUrl,
@@ -41,7 +62,11 @@ async function main() {
         process.stdout.write('\n');
       }
       process.exit(0);
-    } catch (error) {
+    } catch (error: any) {
+      if (isAgentCancelled(error)) {
+        console.error('\nCancelled.');
+        process.exit(130);
+      }
       console.error('Error:', error);
       process.exit(1);
     }
@@ -68,7 +93,7 @@ async function main() {
       try {
         let streamed = false;
         process.stdout.write('🐰 Thinking... ');
-        const response = await runPrompt(input, {
+        const response = await runPromptWithInterrupt(input, {
           agentId: args.agentId,
           profile: args.profile,
           gatewayUrl,
@@ -89,7 +114,13 @@ async function main() {
         } else {
           process.stdout.write('\n\n');
         }
-      } catch (error) {
+      } catch (error: any) {
+        if (isAgentCancelled(error)) {
+          readline.clearLine(process.stdout, 0);
+          readline.cursorTo(process.stdout, 0);
+          console.log('\nCancelled.\n');
+          return ask();
+        }
         console.error('\nError:', error);
       }
 
