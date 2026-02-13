@@ -10,7 +10,6 @@ Usage:
   hare <prompt>             Run a one-off task
   hare --agent <id>         Use a specific agent profile
   hare --profile <name>     Use a specific tool profile (minimal, coding, full)
-  hare --local              Run the agent locally (bypass gateway)
   hare gateway <command>    Manage the gateway service
   hare onboard              Run quickstart onboarding
   hare setup                Configure AI providers
@@ -33,8 +32,7 @@ Examples:
   hare "Summarize this file"
   hare --agent work --profile coding "Draft an email"
   hare tui
-  hare tui --local
-  hare tui --gateway --url ws://127.0.0.1:18789/ws
+  hare tui --url ws://127.0.0.1:18789/ws
   hare gateway install
   hare gateway foreground
   hare onboard

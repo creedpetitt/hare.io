@@ -1,6 +1,6 @@
 import { DiscordChannel } from '../../channels/discord.js';
 import { loadConfig } from '../../core/config.js';
-import { runPrompt } from '@runtime/chat.js';
+import { runChannelAgent } from './runner.js';
 
 let active: DiscordChannel | undefined;
 
@@ -26,14 +26,7 @@ export async function startDiscordChannel(): Promise<void> {
   active = new DiscordChannel(
     { token, allowFrom, dmPolicy },
     {
-      onMessage: async (msg) =>
-        runPrompt(msg.text, {
-          agentId: 'main',
-          profile: undefined,
-          local: true,
-          gatewayUrl: 'ws://127.0.0.1:18789/ws',
-          gatewayToken: config.gateway?.token,
-        }),
+      onMessage: async (msg) => runChannelAgent(msg.text, { agentId: 'main', sessionId: 'main' }),
       onLog: (line) => console.log(line),
     }
   );

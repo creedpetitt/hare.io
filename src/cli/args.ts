@@ -1,7 +1,6 @@
 export type ParsedArgs = {
   agentId: string;
   profile?: string;
-  local: boolean;
   command: string;
   commandArgs: string[];
 };
@@ -13,16 +12,11 @@ const VALUE_FLAGS: Record<string, keyof Pick<ParsedArgs, 'agentId' | 'profile'>>
   '-p': 'profile',
 };
 
-const BOOL_FLAGS: Record<string, keyof Pick<ParsedArgs, 'local'>> = {
-  '--local': 'local',
-};
-
 export function parseArgs(): ParsedArgs {
   const argv = process.argv.slice(2);
 
   let agentId = 'main';
   let profile: string | undefined = undefined;
-  let local = false;
 
   let i = 0;
 
@@ -32,12 +26,6 @@ export function parseArgs(): ParsedArgs {
     if (token === '--') {
       i++;
       break;
-    }
-
-    if (token in BOOL_FLAGS) {
-      local = true;
-      i++;
-      continue;
     }
 
     if (token in VALUE_FLAGS) {
@@ -60,5 +48,5 @@ export function parseArgs(): ParsedArgs {
   const command = remaining[0] ?? '';
   const commandArgs = remaining.slice(1);
 
-  return { agentId, profile, local, command, commandArgs };
+  return { agentId, profile, command, commandArgs };
 }

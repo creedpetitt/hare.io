@@ -5,7 +5,7 @@ import { runDiscordCommand } from '@cli/channels/discord.js';
 
 export async function handleChannelCommand(args: ParsedArgs): Promise<CommandResult> {
   const handler = args.command === 'telegram' ? runTelegramCommand : runDiscordCommand;
-  const shouldExit = await handler(args.commandArgs, { local: args.local });
+  const shouldExit = await handler(args.commandArgs);
   if (shouldExit) {
     return { handled: true, exitCode: 0 };
   }

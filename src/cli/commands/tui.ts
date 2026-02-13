@@ -7,7 +7,6 @@ type TuiCommandOptions = {
   agentId: string;
   sessionId: string;
   profile?: string;
-  local: boolean;
   gatewayUrl: string;
   gatewayToken?: string;
 };
@@ -17,20 +16,11 @@ function parseTuiOptions(args: ParsedArgs): TuiCommandOptions {
   let agentId = args.agentId;
   let sessionId = 'main';
   let profile = args.profile;
-  let local = args.local;
   let gatewayUrl = process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
   let gatewayToken = process.env.HARE_GATEWAY_TOKEN;
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    if (token === '--local') {
-      local = true;
-      continue;
-    }
-    if (token === '--gateway') {
-      local = false;
-      continue;
-    }
     if ((token === '--agent' || token === '-a') && tokens[i + 1]) {
       agentId = tokens[i + 1];
       i += 1;
@@ -58,7 +48,7 @@ function parseTuiOptions(args: ParsedArgs): TuiCommandOptions {
     }
   }
 
-  return { agentId, sessionId, profile, local, gatewayUrl, gatewayToken };
+  return { agentId, sessionId, profile, gatewayUrl, gatewayToken };
 }
 
 export async function handleTuiCommand(args: ParsedArgs): Promise<CommandResult> {

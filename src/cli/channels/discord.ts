@@ -9,8 +9,7 @@ import {
 } from '@cli/channels/shared.js';
 
 export async function runDiscordCommand(
-  commandArgs: string[],
-  options: { local: boolean }
+  commandArgs: string[]
 ): Promise<boolean> {
   const subcommand = commandArgs[0];
   if (!subcommand) {
@@ -29,7 +28,7 @@ export async function runDiscordCommand(
       printDiscordUsage();
       return true;
     }
-    const channel = await createDiscordChannel(async () => '', options.local);
+    const channel = await createDiscordChannel(async () => '');
     await channel.start();
     await channel.send(to, message);
     await channel.stop();
@@ -47,12 +46,11 @@ export async function runDiscordCommand(
       const response = await runPrompt(text, {
         agentId: 'main',
         profile: undefined,
-        local: options.local,
         gatewayUrl: process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws',
         gatewayToken: process.env.HARE_GATEWAY_TOKEN,
       });
       return response;
-    }, options.local);
+    });
 
     await channel.start();
     await waitForShutdown(async () => channel.stop());
@@ -63,10 +61,7 @@ export async function runDiscordCommand(
   return true;
 }
 
-async function createDiscordChannel(
-  onMessage: (text: string) => Promise<string>,
-  _local: boolean
-) {
+async function createDiscordChannel(onMessage: (text: string) => Promise<string>) {
   const config = await loadConfig();
   const token = config.channels?.discord?.botToken || process.env.DISCORD_BOT_TOKEN;
   if (!token) {

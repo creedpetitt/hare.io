@@ -4,8 +4,7 @@ import { runPrompt } from '@runtime/chat.js';
 import { PAIRING_TIMEOUT_MS, generatePairingCode, parseSendArgs } from '@cli/channels/shared.js';
 
 export async function runTelegramCommand(
-  commandArgs: string[],
-  options: { local: boolean }
+  commandArgs: string[]
 ): Promise<boolean> {
   const subcommand = commandArgs[0];
   if (!subcommand) {
@@ -24,7 +23,7 @@ export async function runTelegramCommand(
       printTelegramUsage();
       return true;
     }
-    const channel = await createTelegramChannel(async () => '', options.local);
+    const channel = await createTelegramChannel(async () => '');
     await channel.send(to, message);
     console.log('Sent.');
     return true;
@@ -40,12 +39,11 @@ export async function runTelegramCommand(
       const response = await runPrompt(text, {
         agentId: 'main',
         profile: undefined,
-        local: options.local,
         gatewayUrl: process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws',
         gatewayToken: process.env.HARE_GATEWAY_TOKEN,
       });
       return response;
-    }, options.local);
+    });
 
     await channel.start();
     return false;
@@ -55,10 +53,7 @@ export async function runTelegramCommand(
   return true;
 }
 
-async function createTelegramChannel(
-  onMessage: (text: string) => Promise<string>,
-  _local: boolean
-) {
+async function createTelegramChannel(onMessage: (text: string) => Promise<string>) {
   const config = await loadConfig();
   const token = config.channels?.telegram?.botToken || process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {

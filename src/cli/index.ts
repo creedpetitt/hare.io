@@ -28,7 +28,6 @@ async function main() {
       const response = await runPrompt(prompt, {
         agentId: args.agentId,
         profile: args.profile,
-        local: args.local,
         gatewayUrl,
         gatewayToken,
         onStream: (delta) => {
@@ -72,7 +71,6 @@ async function main() {
         const response = await runPrompt(input, {
           agentId: args.agentId,
           profile: args.profile,
-          local: args.local,
           gatewayUrl,
           gatewayToken,
           onStream: (delta) => {

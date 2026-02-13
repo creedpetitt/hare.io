@@ -1,5 +1,3 @@
-import { Agent } from '@core/Agent.js';
-import { getConfiguredLLM } from '@core/llm/getLLM.js';
 import { loadConfig } from '@core/config.js';
 import { GatewayClient } from '@gateway/client.js';
 
@@ -7,7 +5,6 @@ export type RunPromptOptions = {
   agentId: string;
   sessionId?: string;
   profile?: string;
-  local: boolean;
   gatewayUrl: string;
   gatewayToken?: string;
   onStream?: (delta: string) => void;
@@ -15,35 +12,12 @@ export type RunPromptOptions = {
 
 export async function runPrompt(prompt: string, options: RunPromptOptions): Promise<string> {
   const sessionId = options.sessionId || options.agentId;
-  if (options.local) {
-    const { llm, model } = await getConfiguredLLM();
-    const config = await loadConfig();
-    const agent = new Agent(
-      sessionId,
-      llm,
-      options.agentId,
-      {
-        model,
-        debug: process.env.DEBUG === 'true',
-        tools: options.profile ? { profile: options.profile as any } : undefined,
-        bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
-        skills: config.agents?.defaults?.skills,
-      },
-      options.onStream
-        ? {
-            assistantObserver: {
-              onAssistantDelta: (_runId, delta) => options.onStream?.(delta),
-            },
-          }
-        : undefined
-    );
-    return agent.run(prompt);
-  }
-
   const config = await loadConfig();
   const token = options.gatewayToken || config.gateway?.token;
   if (!token) {
-    throw new Error('Gateway token missing. Run `hare setup` or set HARE_GATEWAY_TOKEN.');
+    throw new Error(
+      'Gateway token missing. Run `hare setup` or set HARE_GATEWAY_TOKEN, then verify with `hare gateway status`.'
+    );
   }
 
   const client = new GatewayClient({
@@ -57,10 +31,32 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
     onStream: options.onStream,
   });
 
-  return client.runAgent({
-    input: prompt,
-    sessionId,
-    agentId: options.agentId,
-    profile: options.profile,
-  });
+  try {
+    return await client.runAgent({
+      input: prompt,
+      sessionId,
+      agentId: options.agentId,
+      profile: options.profile,
+    });
+  } catch (error: any) {
+    if (isGatewayUnavailable(error)) {
+      throw new Error(
+        `Gateway unavailable at ${options.gatewayUrl}. Run \`hare gateway status\`, then \`hare gateway start\` (or \`hare gateway foreground\`).`
+      );
+    }
+    throw error;
+  }
+}
+
+function isGatewayUnavailable(error: any): boolean {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(code)) return true;
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('econnrefused') ||
+    message.includes('connect ehostunreach') ||
+    message.includes('connect enotfound') ||
+    message.includes('timed out while connecting') ||
+    message.includes('websocket was closed before the connection was established')
+  );
 }
