@@ -145,14 +145,18 @@ export class Agent {
     const summary = result.summary.trim();
     if (summary) {
       const historyEntry = formatHistoryEntry(this.sessionId, summary);
-      await this.contextBuilder.appendHistoryEntry(this.sessionId, historyEntry);
-      context.historyLog = await this.contextBuilder.loadHistoryLog(
-        this.sessionId,
+      await this.contextBuilder.appendHistoryEntry(historyEntry);
+      context.historySummary = await this.contextBuilder.loadHistorySummary(
         this.config.bootstrapMaxChars ?? 20_000
       );
     }
 
     await this.contextBuilder.upsertMemoryFacts(result.newFacts);
+    if (result.newFacts.length > 0) {
+      context.memoryFacts = await this.contextBuilder.loadMemoryFacts(
+        this.config.bootstrapMaxChars ?? 20_000
+      );
+    }
     const activeWindow = context.history.slice(-keepCount);
     const { messages: active, droppedInvalidTools } = sanitizeHistory(activeWindow);
     if (droppedInvalidTools > 0 && this.config.debug) {
@@ -315,17 +319,18 @@ export class Agent {
       context.files.user,
       '',
       '=== PERSISTENT MEMORY ===',
-      context.files.memory,
+      context.memoryFacts || 'No saved memory facts yet.',
       '',
       '=== MEMORY PROTOCOL ===',
       'To save a permanent fact, use: [[MEMORY: fact]]',
+      'To retrieve older compacted context, use the search_history tool.',
       '',
       '=== TOOL RESPONSE FORMAT ===',
       'Tool responses are JSON with fields: toolName, success, result, error.',
       'error is null or { code, message, details }.',
       '',
       '=== COMPACTED HISTORY LOG ===',
-      context.historyLog || 'No compacted history yet.',
+      context.historySummary || 'No compacted history yet.',
       '',
       '=== AVAILABLE SKILLS ===',
       skillsPrompt,

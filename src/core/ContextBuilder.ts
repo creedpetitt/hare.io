@@ -36,6 +36,7 @@ export class ContextBuilder {
   private workspaceDir: string;
   private sessionsDir: string;
   private skillsDir: string;
+  private memoryDir: string;
 
   constructor(baseDir: string = DEFAULT_CONFIG_DIR, agentId: string = 'main') {
     // ~/.hareio/agents/<agentId>/workspace
@@ -44,6 +45,8 @@ export class ContextBuilder {
     this.sessionsDir = path.join(baseDir, 'agents', agentId, 'sessions');
     // ~/.hareio/agents/<agentId>/workspace/skills
     this.skillsDir = path.join(this.workspaceDir, 'skills');
+    // ~/.hareio/agents/<agentId>/workspace/memory
+    this.memoryDir = path.join(this.workspaceDir, 'memory');
   }
 
   async init(): Promise<void> {
@@ -51,6 +54,7 @@ export class ContextBuilder {
     await fs.mkdir(this.workspaceDir, { recursive: true });
     await fs.mkdir(this.sessionsDir, { recursive: true });
     await fs.mkdir(this.skillsDir, { recursive: true });
+    await fs.mkdir(this.memoryDir, { recursive: true });
     await this.scaffoldDefaults();
   }
 
@@ -61,14 +65,27 @@ export class ContextBuilder {
       'AGENTS.md':
         '1. Never delete or overwrite files without explicit user confirmation.\n2. When using tools, explain your thought process briefly.\n3. If a task is ambiguous, ask clarifying questions.',
       'TOOLS.md':
-        '# Tool Usage Conventions\n- Use the Browser tool for retrieving live web data.\n- Use the FileSystem tool for reading/writing local files.',
+        '# Tool Usage Conventions\n- Use web_search/web_fetch for live web data.\n- Use search_history for older compacted memory context.\n- Use filesystem tools for reading/writing local files.',
       'IDENTITY.md': 'Name: Harebot\nEmoji: 🐰\nVersion: 1.0.0',
       'USER.md': 'User: Admin\nPreferences: Concise answers.',
-      'MEMORY.md': '# Persistent Memory\n',
     };
 
     for (const [file, content] of Object.entries(defaults)) {
       const filePath = path.join(this.workspaceDir, file);
+      try {
+        await fs.access(filePath);
+      } catch {
+        await fs.writeFile(filePath, content, 'utf-8');
+      }
+    }
+
+    const memoryDefaults: Record<string, string> = {
+      'MEMORY.md': '# Persistent Memory\n\n## Facts\n',
+      'HISTORY.md': '',
+    };
+
+    for (const [file, content] of Object.entries(memoryDefaults)) {
+      const filePath = path.join(this.memoryDir, file);
       try {
         await fs.access(filePath);
       } catch {
@@ -147,10 +164,9 @@ When asked to clean up code:
       this.loadBootstrapFile('TOOLS.md', maxChars),
       this.loadBootstrapFile('IDENTITY.md', maxChars),
       this.loadBootstrapFile('USER.md', maxChars),
-      this.loadBootstrapFile('MEMORY.md', maxChars),
     ]);
-    const [soul, agents, tools, identity, user, memory] = entries;
-    return { soul, agents, tools, identity, user, memory };
+    const [soul, agents, tools, identity, user] = entries;
+    return { soul, agents, tools, identity, user };
   }
 
   private async loadBootstrapFile(name: string, maxChars: number): Promise<string> {
@@ -231,15 +247,22 @@ When asked to clean up code:
     return messages;
   }
 
-  async loadHistoryLog(sessionId: string, maxChars: number = 20_000): Promise<string> {
-    const historyPath = this.getHistoryPath(sessionId);
-    const content = await readFileSafe(historyPath, '');
+  async loadMemoryFacts(maxChars: number = 20_000): Promise<string> {
+    const memoryPath = this.getMemoryFactsPath();
+    const content = await readFileSafe(memoryPath, '');
     if (!content) return '';
-    return truncateBootstrap(`${sessionId}.history.md`, content, maxChars);
+    return truncateBootstrap('MEMORY.md', content, maxChars);
   }
 
-  async appendHistoryEntry(sessionId: string, entry: string): Promise<void> {
-    const historyPath = this.getHistoryPath(sessionId);
+  async loadHistorySummary(maxChars: number = 20_000): Promise<string> {
+    const historyPath = this.getHistorySummaryPath();
+    const content = await readFileSafe(historyPath, '');
+    if (!content) return '';
+    return truncateBootstrap('HISTORY.md', content, maxChars);
+  }
+
+  async appendHistoryEntry(entry: string): Promise<void> {
+    const historyPath = this.getHistorySummaryPath();
     const existing = await readFileSafe(historyPath, '');
     const prefix = existing.trim().length > 0 ? '\n\n' : '';
     await fs.appendFile(historyPath, `${prefix}${entry.trim()}\n`, 'utf-8');
@@ -264,7 +287,7 @@ When asked to clean up code:
 
   async upsertMemoryFacts(facts: string[]): Promise<void> {
     if (facts.length === 0) return;
-    const memoryPath = path.join(this.workspaceDir, 'MEMORY.md');
+    const memoryPath = this.getMemoryFactsPath();
     const existing = await readFileSafe(memoryPath, '');
     const existingFacts = parseMemoryFacts(existing);
     const merged = mergeMemoryFacts(existingFacts, facts);
@@ -276,7 +299,8 @@ When asked to clean up code:
     const maxChars = configOverride?.bootstrapMaxChars ?? 20_000;
     const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
-    const historyLog = await this.loadHistoryLog(sessionId, maxChars);
+    const memoryFacts = await this.loadMemoryFacts(maxChars);
+    const historySummary = await this.loadHistorySummary(maxChars);
     const skills = await this.loadSkills(configOverride?.skills?.maxCharsPerSkill ?? 4_000);
 
     const config: AgentConfig = {
@@ -301,11 +325,15 @@ When asked to clean up code:
       ...configOverride,
     };
 
-    return { config, history, files, historyLog, skills };
+    return { config, history, files, memoryFacts, historySummary, skills };
   }
 
-  private getHistoryPath(sessionId: string): string {
-    return path.join(this.sessionsDir, `${sessionId}.history.md`);
+  private getMemoryFactsPath(): string {
+    return path.join(this.memoryDir, 'MEMORY.md');
+  }
+
+  private getHistorySummaryPath(): string {
+    return path.join(this.memoryDir, 'HISTORY.md');
   }
 }
 

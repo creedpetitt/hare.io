@@ -26,7 +26,6 @@ export interface BootstrapFiles {
   tools: string;
   identity: string;
   user: string;
-  memory: string;
 }
 
 export interface SkillDefinition {
@@ -68,7 +67,8 @@ export interface AgentContext {
   config: AgentConfig;
   history: Message[];
   files: BootstrapFiles;
-  historyLog: string;
+  memoryFacts: string;
+  historySummary: string;
   skills: SkillDefinition[];
 }
 

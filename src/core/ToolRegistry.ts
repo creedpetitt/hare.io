@@ -2,12 +2,14 @@ import { Tool, ToolConfig, ToolPolicy, ToolPolicyConfig, ToolProfile } from './t
 import { ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool } from '../tools/fs.js';
 import { WebFetchTool } from '../tools/web_fetch.js';
 import { WebSearchTool } from '../tools/web_search.js';
+import { SearchHistoryTool } from '../tools/search_history.js';
 
 export class ToolRegistry {
   private static tools = new Map<string, Tool<any>>();
 
   private static groups: Record<string, string[]> = {
     'group:fs': ['read_file', 'write_file', 'edit_file', 'list_files'],
+    'group:memory': ['search_history'],
     'group:runtime': ['exec'],
     'group:web': ['web_search', 'web_fetch'],
     'group:ui': ['browser'],
@@ -16,7 +18,7 @@ export class ToolRegistry {
 
   private static profiles: Record<ToolProfile, string[]> = {
     minimal: [],
-    coding: ['group:fs', 'group:runtime'],
+    coding: ['group:fs', 'group:memory', 'group:runtime'],
     messaging: ['group:sessions'],
     full: ['*'],
   };
@@ -31,6 +33,7 @@ export class ToolRegistry {
     this.register(new WriteFileTool());
     this.register(new EditFileTool());
     this.register(new ListFilesTool());
+    this.register(new SearchHistoryTool());
     this.register(new WebFetchTool());
     this.register(new WebSearchTool());
   }
