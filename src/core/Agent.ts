@@ -24,7 +24,6 @@ export class Agent {
   private config: AgentConfig;
   private tools: Tool<any>[] = [];
   private compactor: Compactor;
-  private conversationSummary: string = '';
   private runId: string;
   private abortController?: AbortController;
   private toolObserver?: ToolExecutionObserver;
@@ -126,10 +125,6 @@ export class Agent {
     this.config = context.config;
     this.tools = ToolRegistry.getTools(this.config.tools);
 
-    if (!this.conversationSummary && context.summary) {
-      this.conversationSummary = context.summary;
-    }
-
     if (context.history.length > this.config.compactionThreshold) {
       await this.performCompaction(context);
     }
@@ -144,15 +139,20 @@ export class Agent {
   private async performCompaction(context: AgentContext) {
     const keepCount = this.config.compactionKeep;
     const toCompact = context.history.slice(0, -keepCount);
+    if (toCompact.length === 0) return;
 
-    const result = await this.compactor.compact(toCompact, this.conversationSummary);
-    this.conversationSummary = result.summary;
-
-    for (const fact of result.newFacts) {
-      await this.contextBuilder.appendMemory(fact);
+    const result = await this.compactor.compact(toCompact);
+    const summary = result.summary.trim();
+    if (summary) {
+      const historyEntry = formatHistoryEntry(this.sessionId, summary);
+      await this.contextBuilder.appendHistoryEntry(this.sessionId, historyEntry);
+      context.historyLog = await this.contextBuilder.loadHistoryLog(
+        this.sessionId,
+        this.config.bootstrapMaxChars ?? 20_000
+      );
     }
 
-    await this.contextBuilder.saveSummary(this.sessionId, this.conversationSummary);
+    await this.contextBuilder.upsertMemoryFacts(result.newFacts);
     const activeWindow = context.history.slice(-keepCount);
     const { messages: active, droppedInvalidTools } = sanitizeHistory(activeWindow);
     if (droppedInvalidTools > 0 && this.config.debug) {
@@ -160,7 +160,7 @@ export class Agent {
         `[HISTORY] Dropped ${droppedInvalidTools} orphan tool message(s) during compaction.`
       );
     }
-    await this.contextBuilder.archiveMessages(this.sessionId, toCompact, active);
+    await this.contextBuilder.replaceSession(this.sessionId, active);
     context.history = active;
   }
 
@@ -260,10 +260,16 @@ export class Agent {
 
   private async extractAndSaveMemories(content: string): Promise<string> {
     const memoryPattern = /\[\[MEMORY:\s*(.+?)\]\]/g;
+    const extractedFacts: string[] = [];
     let match;
     while ((match = memoryPattern.exec(content)) !== null) {
-      await this.contextBuilder.appendMemory(match[1]);
-      if (this.config.debug) console.log(`[MEMORY] ${match[1]}`);
+      const fact = match[1].trim();
+      if (!fact) continue;
+      extractedFacts.push(fact);
+      if (this.config.debug) console.log(`[MEMORY] ${fact}`);
+    }
+    if (extractedFacts.length > 0) {
+      await this.contextBuilder.upsertMemoryFacts(extractedFacts);
     }
     return content.replace(memoryPattern, '').trim();
   }
@@ -318,6 +324,9 @@ export class Agent {
       'Tool responses are JSON with fields: toolName, success, result, error.',
       'error is null or { code, message, details }.',
       '',
+      '=== COMPACTED HISTORY LOG ===',
+      context.historyLog || 'No compacted history yet.',
+      '',
       '=== AVAILABLE SKILLS ===',
       skillsPrompt,
       '',
@@ -333,10 +342,6 @@ export class Agent {
       '=== AVAILABLE TOOLS ===',
       toolsPrompt,
     ];
-
-    if (this.conversationSummary) {
-      parts.unshift('=== CONVERSATION SUMMARY ===', this.conversationSummary, '');
-    }
 
     return parts.join('\n').trim();
   }
@@ -462,4 +467,9 @@ function uniqueByName(skills: SkillDefinition[]): SkillDefinition[] {
     result.push(skill);
   }
   return result;
+}
+
+function formatHistoryEntry(sessionId: string, summary: string): string {
+  const timestamp = new Date().toISOString();
+  return [`## ${timestamp} session:${sessionId}`, 'Summary:', summary].join('\n');
 }

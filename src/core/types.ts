@@ -68,7 +68,7 @@ export interface AgentContext {
   config: AgentConfig;
   history: Message[];
   files: BootstrapFiles;
-  summary: string;
+  historyLog: string;
   skills: SkillDefinition[];
 }
 

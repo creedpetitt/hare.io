@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { AgentConfig, AgentContext, BootstrapFiles, Message, SkillDefinition } from './types.js';
 import { sanitizeHistory } from './history.js';
+import { formatMemoryFile, mergeMemoryFacts, parseMemoryFacts } from './memory/memoryHygiene.js';
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.hareio');
 
@@ -32,13 +33,11 @@ type SkillFrontmatter = {
 };
 
 export class ContextBuilder {
-  private configDir: string;
   private workspaceDir: string;
   private sessionsDir: string;
   private skillsDir: string;
 
   constructor(baseDir: string = DEFAULT_CONFIG_DIR, agentId: string = 'main') {
-    this.configDir = baseDir;
     // ~/.hareio/agents/<agentId>/workspace
     this.workspaceDir = path.join(baseDir, 'agents', agentId, 'workspace');
     // ~/.hareio/agents/<agentId>/sessions
@@ -232,31 +231,24 @@ When asked to clean up code:
     return messages;
   }
 
-  async loadSummary(sessionId: string): Promise<string> {
-    const summaryPath = path.join(this.sessionsDir, `${sessionId}.summary.md`);
-    return await readFileSafe(summaryPath, '');
+  async loadHistoryLog(sessionId: string, maxChars: number = 20_000): Promise<string> {
+    const historyPath = this.getHistoryPath(sessionId);
+    const content = await readFileSafe(historyPath, '');
+    if (!content) return '';
+    return truncateBootstrap(`${sessionId}.history.md`, content, maxChars);
   }
 
-  async saveSummary(sessionId: string, summary: string): Promise<void> {
-    const summaryPath = path.join(this.sessionsDir, `${sessionId}.summary.md`);
-    await fs.writeFile(summaryPath, summary, 'utf-8');
+  async appendHistoryEntry(sessionId: string, entry: string): Promise<void> {
+    const historyPath = this.getHistoryPath(sessionId);
+    const existing = await readFileSafe(historyPath, '');
+    const prefix = existing.trim().length > 0 ? '\n\n' : '';
+    await fs.appendFile(historyPath, `${prefix}${entry.trim()}\n`, 'utf-8');
   }
 
-  async archiveMessages(
-    sessionId: string,
-    messagesToArchive: Message[],
-    activeMessages: Message[]
-  ): Promise<void> {
-    const archivePath = path.join(this.sessionsDir, `${sessionId}.archive.jsonl`);
+  async replaceSession(sessionId: string, messages: Message[]): Promise<void> {
     const sessionPath = path.join(this.sessionsDir, `${sessionId}.jsonl`);
-
-    // 1. Append old messages to archive
-    const archiveContent = messagesToArchive.map((m) => JSON.stringify(m)).join('\n') + '\n';
-    await fs.appendFile(archivePath, archiveContent);
-
-    // 2. Overwrite active session with only recent messages
-    const activeContent = activeMessages.map((m) => JSON.stringify(m)).join('\n') + '\n';
-    await fs.writeFile(sessionPath, activeContent);
+    const content = messages.length > 0 ? messages.map((m) => JSON.stringify(m)).join('\n') + '\n' : '';
+    await fs.writeFile(sessionPath, content, 'utf-8');
   }
 
   async appendMessage(sessionId: string, message: Message): Promise<void> {
@@ -270,10 +262,13 @@ When asked to clean up code:
     await fs.writeFile(sessionPath, serialized, 'utf-8');
   }
 
-  async appendMemory(content: string): Promise<void> {
+  async upsertMemoryFacts(facts: string[]): Promise<void> {
+    if (facts.length === 0) return;
     const memoryPath = path.join(this.workspaceDir, 'MEMORY.md');
-    const timestamp = new Date().toISOString();
-    await fs.appendFile(memoryPath, `- [${timestamp}] ${content}\n`);
+    const existing = await readFileSafe(memoryPath, '');
+    const existingFacts = parseMemoryFacts(existing);
+    const merged = mergeMemoryFacts(existingFacts, facts);
+    await fs.writeFile(memoryPath, formatMemoryFile(merged), 'utf-8');
   }
 
   async build(sessionId: string, configOverride?: Partial<AgentConfig>): Promise<AgentContext> {
@@ -281,7 +276,7 @@ When asked to clean up code:
     const maxChars = configOverride?.bootstrapMaxChars ?? 20_000;
     const files = await this.loadBootstrap(maxChars);
     const history = await this.loadSession(sessionId);
-    const summary = await this.loadSummary(sessionId);
+    const historyLog = await this.loadHistoryLog(sessionId, maxChars);
     const skills = await this.loadSkills(configOverride?.skills?.maxCharsPerSkill ?? 4_000);
 
     const config: AgentConfig = {
@@ -306,7 +301,11 @@ When asked to clean up code:
       ...configOverride,
     };
 
-    return { config, history, files, summary, skills };
+    return { config, history, files, historyLog, skills };
+  }
+
+  private getHistoryPath(sessionId: string): string {
+    return path.join(this.sessionsDir, `${sessionId}.history.md`);
   }
 }
 

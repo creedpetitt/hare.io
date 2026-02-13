@@ -13,12 +13,10 @@ export class Compactor {
     this.llm = llm;
   }
 
-  async compact(messages: Message[], prevSummary: string = ''): Promise<CompactionResult> {
+  async compact(messages: Message[]): Promise<CompactionResult> {
     const systemPrompt = `You are a memory manager. Your job is to:
 1. Summarize the conversation history.
 2. Extract new, permanent facts about the user or project.
-
-${prevSummary ? `=== PREVIOUS SUMMARY ===\n${prevSummary}\n` : ''}
 
 === INSTRUCTIONS ===
 - Output MUST be in the following specific format:
@@ -65,8 +63,8 @@ ${prevSummary ? `=== PREVIOUS SUMMARY ===\n${prevSummary}\n` : ''}
       const factsText = text.substring(factsIndex + factsMarker.length).trim();
       facts = factsText
         .split('\n')
-        .map(line => line.replace(/^-\s*/, '').trim()) 
-        .filter(line => line.length > 0);
+        .map((line) => line.replace(/^-\s*/, '').trim())
+        .filter((line) => line.length > 0);
     } else if (summaryIndex !== -1) {
       summary = text.substring(summaryIndex + summaryMarker.length).trim();
     } else {
