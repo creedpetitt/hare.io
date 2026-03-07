@@ -1,5 +1,5 @@
 import { TelegramChannel } from '@channels/telegram.js';
-import { loadConfig, saveConfig } from '@core/config.js';
+import { loadConfig, saveConfig, getGatewayUrl } from '@core/config.js';
 import { runPrompt } from '@runtime/chat.js';
 import { PAIRING_TIMEOUT_MS, generatePairingCode, parseSendArgs } from '@cli/channels/shared.js';
 
@@ -35,11 +35,12 @@ export async function runTelegramCommand(
   }
 
   if (subcommand === 'start') {
+    const gatewayUrl = await getGatewayUrl();
     const channel = await createTelegramChannel(async (text) => {
       const response = await runPrompt(text, {
         agentId: 'main',
         profile: undefined,
-        gatewayUrl: process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws',
+        gatewayUrl,
         gatewayToken: process.env.HARE_GATEWAY_TOKEN,
       });
       return response;

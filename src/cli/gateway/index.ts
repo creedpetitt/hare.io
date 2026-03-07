@@ -1,4 +1,4 @@
-import { loadConfig } from '@core/config.js';
+import { loadConfig, getGatewayUrl } from '@core/config.js';
 import { probeGateway } from '@cli/gateway/probe.js';
 import {
   installService,
@@ -62,7 +62,7 @@ export async function handleGatewayCommand(commandArgs: string[]): Promise<boole
 }
 
 export async function isGatewayReady(): Promise<boolean> {
-  const url = process.env.HARE_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+  const url = await getGatewayUrl();
   const config = await loadConfig();
   const token = process.env.HARE_GATEWAY_TOKEN || config.gateway?.token;
 
@@ -79,7 +79,7 @@ export async function isGatewayReady(): Promise<boolean> {
 }
 
 async function printStatus(): Promise<void> {
-  const url = process.env.HARE_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+  const url = await getGatewayUrl();
   const config = await loadConfig();
   const token = process.env.HARE_GATEWAY_TOKEN || config.gateway?.token;
 
