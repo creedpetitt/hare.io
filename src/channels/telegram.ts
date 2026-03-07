@@ -32,6 +32,7 @@ export class TelegramChannel {
 
       if (!from || !chatId) return;
       if (!this.isAllowed(from)) {
+        this.handlers.onLog?.(`[telegram] ignored message from unallowed user=${from}`);
         if (this.handlers.onUnhandledMessage) {
           await this.handlers.onUnhandledMessage({ text, from, chatId });
         }
@@ -48,6 +49,10 @@ export class TelegramChannel {
 
   async start(): Promise<void> {
     await this.bot.start();
+  }
+
+  async getMe() {
+    return await this.bot.api.getMe();
   }
 
   async stop(): Promise<void> {

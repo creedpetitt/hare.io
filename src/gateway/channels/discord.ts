@@ -42,7 +42,9 @@ export async function startDiscordChannel(): Promise<void> {
     }
   );
 
-  active.start().catch((error: any) => {
+  active.start().then(() => {
+    console.log('[discord] channel started');
+  }).catch((error: any) => {
     console.log(
       `[discord] failed to start: ${error?.message || 'unknown error'}${
         error?.code ? ` (${error.code})` : ''

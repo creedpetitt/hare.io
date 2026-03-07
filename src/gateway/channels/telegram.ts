@@ -42,14 +42,20 @@ export async function startTelegramChannel(): Promise<void> {
     }
   );
 
-  active.start().catch((error: any) => {
+  try {
+    const me = await active.getMe();
+    console.log(`[telegram] channel connected as @${me.username}`);
+    active.start().catch((error: any) => {
+      console.log(`[telegram] polling stopped: ${error?.message || 'unknown error'}`);
+    });
+  } catch (error: any) {
     console.log(
-      `[telegram] failed to start: ${error?.message || 'unknown error'}${
+      `[telegram] failed to connect: ${error?.message || 'unknown error'}${
         error?.code ? ` (${error.code})` : ''
       }`
     );
     active = undefined;
-  });
+  }
 }
 
 export async function stopTelegramChannel(): Promise<void> {

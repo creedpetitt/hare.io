@@ -50,6 +50,7 @@ export class DiscordChannel {
       const text = message.content ?? '';
 
       if (!this.isAllowed(from)) {
+        this.handlers.onLog?.(`[discord] ignored message from unallowed user=${from}`);
         if (this.handlers.onUnhandledMessage) {
           await this.handlers.onUnhandledMessage({ text, from, chatId });
         }
