@@ -74,6 +74,11 @@ export class Agent {
           timeoutMs: 10_000,
           maxResultBytes: 1_000_000,
         },
+        byTool: {
+          sessions_spawn: {
+            timeoutMs: 120_000,
+          },
+        },
       },
       ...configOverride,
     } as AgentConfig;
@@ -346,6 +351,9 @@ export class Agent {
       '',
       '=== USER PROFILE ===',
       context.files.user,
+      '',
+      '=== HEARTBEAT CHECKLIST ===',
+      context.files.heartbeat,
       '',
       '=== PERSISTENT MEMORY ===',
       context.memoryFacts || 'No saved memory facts yet.',

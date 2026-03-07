@@ -8,7 +8,6 @@ type TuiOptions = {
   agentId: string;
   sessionId: string;
   profile?: string;
-  local: boolean;
   gatewayUrl: string;
   gatewayToken?: string;
 };
@@ -52,8 +51,7 @@ async function listSessionKeys(agentId: string): Promise<string[]> {
   const files = entries
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-    .filter((name) => name.endsWith('.jsonl'))
-    .filter((name) => !name.endsWith('.archive.jsonl'));
+    .filter((name) => name.endsWith('.jsonl'));
 
   const withMtime: Array<{ key: string; mtimeMs: number }> = [];
   for (const file of files) {
@@ -74,13 +72,10 @@ async function printHeader(state: TuiState): Promise<void> {
   const modelLabel = await resolveConfiguredModelLabel();
   console.log('');
   console.log(
-    `${color('🐰 Hare TUI', 'magenta')} ${color('MVP', 'dim')} ${color('- local-first chat control surface', 'gray')}`
+    `${color('🐰 Hare TUI', 'magenta')} ${color('MVP', 'dim')} ${color('- gateway-first chat control surface', 'gray')}`
   );
   console.log(
-    `${color('mode', 'gray')} ${state.local ? color('local', 'green') : color('gateway', 'green')} ${color('|', 'gray')} ${color(
-      'url',
-      'gray'
-    )} ${state.gatewayUrl}`
+    `${color('mode', 'gray')} ${color('gateway', 'green')} ${color('|', 'gray')} ${color('url', 'gray')} ${state.gatewayUrl}`
   );
   console.log(
     `${color('agent', 'gray')} ${state.agentId} ${color('|', 'gray')} ${color('session', 'gray')} ${
@@ -93,7 +88,12 @@ async function printHeader(state: TuiState): Promise<void> {
     }`
   );
   console.log(color('─'.repeat(90), 'gray'));
-  console.log(color('Tip: /help for TUI commands. Gateway slash commands: /status /skills /models /model ...', 'dim'));
+  console.log(
+    color(
+      'Tip: /help for TUI commands. Gateway slash commands: /status /skills /skill /models /model ...',
+      'dim'
+    )
+  );
   console.log('');
 }
 
@@ -109,7 +109,7 @@ function printLocalHelp(): void {
       '/resume [index|key]  Show recent sessions or switch to one',
       '',
       'Gateway-owned slash commands (gateway mode only):',
-      '/status, /skills, /models, /model <...>',
+      '/status, /skills, /skill <name> [input], /models, /model <...>',
     ].join('\n')
   );
 }
@@ -198,13 +198,6 @@ async function handleLocalCommand(
 }
 
 async function runTurn(state: TuiState, input: string): Promise<void> {
-  if (state.local && input.trim().startsWith('/')) {
-    console.log(
-      color('Slash command routing is gateway-owned. Start TUI without --local to use /status /skills /models /model.', 'red')
-    );
-    return;
-  }
-
   state.runState = 'running';
   let streamed = false;
   let streamBuffer = '';
@@ -214,7 +207,6 @@ async function runTurn(state: TuiState, input: string): Promise<void> {
       agentId: state.agentId,
       sessionId: state.sessionId,
       profile: state.profile,
-      local: state.local,
       gatewayUrl: state.gatewayUrl,
       gatewayToken: state.gatewayToken,
       onStream: (delta) => {

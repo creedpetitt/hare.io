@@ -58,3 +58,16 @@ export async function stopDiscordChannel(): Promise<void> {
   active = undefined;
   await current.stop();
 }
+
+export async function broadcastDiscordMessage(message: string): Promise<void> {
+  if (!active) return;
+  const config = await loadConfig();
+  const allowFrom = config.channels?.discord?.allowFrom ?? [];
+  for (const userId of allowFrom) {
+    try {
+      await active.send(userId, message);
+    } catch (e: any) {
+      console.error(`[discord] Failed to broadcast to ${userId}: ${e.message}`);
+    }
+  }
+}

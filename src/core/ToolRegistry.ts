@@ -3,6 +3,7 @@ import { ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool } from '../too
 import { WebFetchTool } from '../tools/web_fetch.js';
 import { WebSearchTool } from '../tools/web_search.js';
 import { SearchHistoryTool } from '../tools/search_history.js';
+import { SessionsSpawnTool, SessionsListTool } from '../tools/sessions.js';
 
 export class ToolRegistry {
   private static tools = new Map<string, Tool<any>>();
@@ -18,7 +19,7 @@ export class ToolRegistry {
 
   private static profiles: Record<ToolProfile, string[]> = {
     minimal: [],
-    coding: ['group:fs', 'group:memory', 'group:runtime'],
+    coding: ['group:fs', 'group:memory', 'group:runtime', 'group:sessions'],
     messaging: ['group:sessions'],
     full: ['*'],
   };
@@ -36,6 +37,8 @@ export class ToolRegistry {
     this.register(new SearchHistoryTool());
     this.register(new WebFetchTool());
     this.register(new WebSearchTool());
+    this.register(new SessionsSpawnTool());
+    this.register(new SessionsListTool());
   }
 
   static getTools(config?: ToolConfig): Tool<any>[] {

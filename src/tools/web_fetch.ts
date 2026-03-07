@@ -15,7 +15,7 @@ const WebFetchSchema = z.object({
 });
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_MAX_CHARS = 40_000;
+const DEFAULT_MAX_CHARS = 10_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_MAX_BYTES = 2_000_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
