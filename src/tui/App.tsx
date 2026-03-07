@@ -167,17 +167,17 @@ export function App({
           });
         }
       });
-      setRunState('idle');
-      
-      // If no stream occurred but we got a summary (e.g. gateway commands)
+
+      // Always sync the final summary to the UI to handle fast streams
       setMessages(prev => {
          const copy = [...prev];
          const last = copy[copy.length - 1];
-         if (last && last.id === replyId && !last.content) {
+         if (last && last.id === replyId) {
             last.content = finalSummary;
          }
          return copy;
       });
+      setRunState('idle');
 
       // Refresh model label in case it was changed via /model
       const newLabel = await resolveConfiguredModelLabel();

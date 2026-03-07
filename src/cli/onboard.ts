@@ -1,7 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { ensureAuthenticated, ensureAuthenticatedNonInteractive } from '@cli/setup/index.js';
+import { runFullWizard, ensureAuthenticatedNonInteractive } from '@cli/setup/index.js';
 import { handleGatewayCommand, isGatewayReady } from '@cli/gateway/index.js';
+import { runPrompt } from '@runtime/chat.js';
 
 export type OnboardOptions = {
   skipGateway?: boolean;
@@ -10,19 +11,19 @@ export type OnboardOptions = {
 };
 
 export async function runOnboarding(options: OnboardOptions = {}): Promise<void> {
-  console.log('\n🐰 Hare onboarding (QuickStart)\n');
-
   await warnIfGlobalMismatch();
 
   if (options.nonInteractive) {
     await ensureAuthenticatedNonInteractive();
   } else {
-    await ensureAuthenticated(true);
+    await runFullWizard();
   }
 
   if (!options.skipGateway) {
+    console.log('Installing and starting the Gateway daemon...');
     if (process.platform === 'linux') {
       await handleGatewayCommand(['install']);
+      await handleGatewayCommand(['restart']);
     } else {
       console.log('Gateway service install is only supported on Linux right now.');
       console.log('You can run the gateway in dev mode with `npm run gateway:dev`.');
@@ -33,6 +34,19 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<void>
     const ready = await waitForGatewayReady();
     if (ready) {
       await handleGatewayCommand(['status']);
+      
+      console.log('\n🔍 Running final verification...');
+      try {
+        const response = await runPrompt("ping", {
+          agentId: 'main',
+          gatewayUrl: process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws',
+        });
+        if (response) {
+          console.log('✅ Gateway verification successful.');
+        }
+      } catch (e: any) {
+        console.warn(`⚠️  Verification failed: ${e.message}`);
+      }
     } else {
       console.log('Gateway is still starting. Run `hare gateway status` in a few seconds.');
       if (process.platform === 'linux') {
@@ -43,9 +57,10 @@ export async function runOnboarding(options: OnboardOptions = {}): Promise<void>
     }
   }
 
-  console.log('\nNext steps:');
-  console.log('- Run a prompt: hare "hello"');
-  console.log('- Check status: hare gateway status');
+  console.log('\n🚀 Hare is ready!');
+  console.log('- Interactive Chat:  hare tui');
+  console.log('- One-off Task:      hare "summarize this file"');
+  console.log('- Daemon Status:     hare gateway status');
 }
 
 async function warnIfGlobalMismatch(): Promise<void> {
