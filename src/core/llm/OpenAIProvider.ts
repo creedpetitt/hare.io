@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions } from './LLMProvider.js';
+import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions, Usage } from './LLMProvider.js';
 import { Message, Tool } from '../types.js';
 
 export class OpenAIProvider implements LLMProvider {
@@ -46,6 +46,7 @@ export class OpenAIProvider implements LLMProvider {
       model: this.model,
       messages: messages as any,
       tools: openAITools?.length ? openAITools : undefined,
+      stream_options: { include_usage: true }
     });
 
     const abortSignal = options?.abortSignal;
@@ -88,33 +89,47 @@ export class OpenAIProvider implements LLMProvider {
     try {
       const final = await stream.finalChatCompletion();
       const choice = final.choices[0]?.message;
+      const usage = final.usage ? {
+        promptTokens: final.usage.prompt_tokens,
+        completionTokens: final.usage.completion_tokens,
+        totalTokens: final.usage.total_tokens,
+      } : undefined;
+
       if (!content) {
         content = choice?.content || '';
       }
 
-      if (choice?.tool_calls?.length) {
-        const parsed = choice.tool_calls.map((call, index) => {
-          const mapped = {
-            id: call.id || crypto.randomUUID(),
+      const finalToolCalls = (choice?.tool_calls || []).map((call) => ({
+        id: call.id || crypto.randomUUID(),
+        type: 'function' as const,
+        function: {
+          name: call.function.name,
+          arguments: call.function.arguments,
+        },
+      }));
+
+      // If no tool calls in choice, check our accumulated tool calls
+      let toolCallResult = finalToolCalls;
+      if (toolCallResult.length === 0 && toolCalls.size > 0) {
+        toolCallResult = Array.from(toolCalls.entries())
+          .sort(([a], [b]) => a - b)
+          .map(([_, entry]) => ({
+            id: entry.id || crypto.randomUUID(),
             type: 'function' as const,
             function: {
-              name: call.function.name,
-              arguments: call.function.arguments,
+              name: entry.name || 'unknown_tool',
+              arguments: entry.arguments || '{}',
             },
-          };
-          toolCalls.set(index, {
-            id: mapped.id,
-            name: mapped.function.name,
-            arguments: mapped.function.arguments,
-          });
-          return mapped;
-        });
-
-        return {
-          content: content || '',
-          toolCalls: parsed as any,
-        };
+          }))
+          .filter((tc) => tc.function.name !== 'unknown_tool');
       }
+
+      return {
+        content: content || '',
+        toolCalls: toolCallResult.length > 0 ? (toolCallResult as any) : undefined,
+        usage,
+      };
+
     } catch (error: any) {
       if (error?.name === 'APIUserAbortError' || error?.code === 'abort') {
         const err: any = new Error('Stream aborted');
@@ -127,23 +142,6 @@ export class OpenAIProvider implements LLMProvider {
         abortSignal.removeEventListener('abort', onAbort);
       }
     }
-
-    const parsedToolCalls = Array.from(toolCalls.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([_, entry]) => ({
-        id: entry.id || crypto.randomUUID(),
-        type: 'function' as const,
-        function: {
-          name: entry.name || 'unknown_tool',
-          arguments: entry.arguments || '{}',
-        },
-      }))
-      .filter((toolCall) => toolCall.function.name !== 'unknown_tool');
-
-    return {
-      content: content || '',
-      toolCalls: parsedToolCalls.length > 0 ? (parsedToolCalls as any) : undefined,
-    };
   }
 
   private mapMessage(m: Message, normalizeToolId?: (id: string) => string) {

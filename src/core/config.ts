@@ -14,6 +14,7 @@ export type ProviderConfig = {
 export type AppConfig = {
   gateway?: {
     token?: string;
+    port?: number;
   };
   tools?: {
     policy?: ToolPolicyConfig;
@@ -138,4 +139,10 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 
 export function getConfigPath(): string {
   return CONFIG_FILE;
+}
+
+export async function getGatewayUrl(): Promise<string> {
+  const config = await loadConfig();
+  const port = config.gateway?.port || 18789;
+  return process.env.HARE_GATEWAY_URL || `ws://127.0.0.1:${port}/ws`;
 }

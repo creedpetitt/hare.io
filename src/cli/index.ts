@@ -4,6 +4,7 @@ import { parseArgs } from '@cli/args.js';
 import { ensureAuthenticated } from '@cli/setup/index.js';
 import { runPrompt } from '@runtime/chat.js';
 import { dispatch } from '@cli/commands/index.js';
+import { getGatewayUrl } from '@core/config.js';
 
 function isAgentCancelled(error: unknown): boolean {
   const e = error as { code?: string; message?: string };
@@ -38,7 +39,7 @@ async function main() {
 
   // Everything below requires auth
   await ensureAuthenticated();
-  const gatewayUrl = process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
+  const gatewayUrl = await getGatewayUrl();
   const gatewayToken = process.env.HARE_GATEWAY_TOKEN;
 
   // One-Shot Mode (if command exists and isn't a reserved word)

@@ -11,7 +11,7 @@ import {
   AssistantStreamObserver,
   SkillDefinition,
 } from './types.js';
-import { LLMProvider, LLMResponse } from './llm/LLMProvider.js';
+import { LLMProvider, LLMResponse, Usage } from './llm/LLMProvider.js';
 import { Compactor } from './memory/Compactor.js';
 import { ToolRegistry } from './ToolRegistry.js';
 import { sanitizeHistory } from './history.js';
@@ -74,6 +74,11 @@ export class Agent {
           timeoutMs: 10_000,
           maxResultBytes: 1_000_000,
         },
+        byTool: {
+          sessions_spawn: {
+            timeoutMs: 120_000,
+          },
+        },
       },
       ...configOverride,
     } as AgentConfig;
@@ -87,6 +92,9 @@ export class Agent {
     let stoppedByToolLimit = false;
     let finalAnswer = '';
     this.lastLoggedActiveSkills = '';
+
+    // Initialize accumulated usage
+    const accumulatedUsage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     while (true) {
       this.throwIfAborted();
@@ -126,6 +134,14 @@ export class Agent {
           : undefined,
         this.abortController ? { abortSignal: this.abortController.signal } : undefined
       );
+
+      // Accumulate usage and emit via observer
+      if (response.usage) {
+        accumulatedUsage.promptTokens += response.usage.promptTokens;
+        accumulatedUsage.completionTokens += response.usage.completionTokens;
+        accumulatedUsage.totalTokens += response.usage.totalTokens;
+        this.assistantObserver?.onUsage?.(this.runId, accumulatedUsage);
+      }
 
       const responseText = (response.content ?? '').trim();
       if (responseText) {
@@ -167,6 +183,10 @@ export class Agent {
         ' Please retry with a narrower prompt.';
     }
 
+    if (this.config.debug) {
+      console.log(`[AGENT] Final Total Usage: ${JSON.stringify(accumulatedUsage)}`);
+    }
+
     return finalAnswer;
   }
 
@@ -175,7 +195,18 @@ export class Agent {
     this.config = context.config;
     this.tools = ToolRegistry.getTools(this.config.tools);
 
-    if (context.history.length > this.config.compactionThreshold) {
+    const maxHistoryTokens = 32_000;
+    const estimatedTokens = this.estimateHistoryTokens(context.history);
+
+    if (
+      context.history.length > this.config.compactionThreshold ||
+      estimatedTokens > maxHistoryTokens
+    ) {
+      if (this.config.debug) {
+        console.log(
+          `[COMPACTION] Triggered. Messages: ${context.history.length}, Estimated Tokens: ${estimatedTokens}`
+        );
+      }
       await this.performCompaction(context);
     }
 
@@ -184,6 +215,20 @@ export class Agent {
     context.history.push(userMsg);
 
     return context;
+  }
+
+  private estimateHistoryTokens(history: Message[]): number {
+    let totalChars = 0;
+    for (const msg of history) {
+      totalChars += (msg.content || '').length;
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          totalChars += tc.function.name.length + tc.function.arguments.length;
+        }
+      }
+    }
+    // Rough industry standard: 4 characters per token
+    return Math.ceil(totalChars / 4);
   }
 
   private async performCompaction(context: AgentContext) {
@@ -346,6 +391,9 @@ export class Agent {
       '',
       '=== USER PROFILE ===',
       context.files.user,
+      '',
+      '=== HEARTBEAT CHECKLIST ===',
+      context.files.heartbeat,
       '',
       '=== PERSISTENT MEMORY ===',
       context.memoryFacts || 'No saved memory facts yet.',

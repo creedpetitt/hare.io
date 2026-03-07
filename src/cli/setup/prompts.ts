@@ -1,4 +1,5 @@
-import { confirm, password, select } from '@inquirer/prompts';
+import { confirm, password, select, input } from '@inquirer/prompts';
+import pc from 'picocolors';
 import { type AppConfig, type ProviderId } from '@core/config.js';
 import {
   validateOpenAI,
@@ -72,7 +73,7 @@ export async function promptForApiKey(provider: ProviderId): Promise<{
       mask: '*',
     });
 
-    process.stdout.write('🔍 Validating key... ');
+    process.stdout.write('  Validating key... ');
     const validation =
       provider === 'openai'
         ? await validateOpenAI(apiKey)
@@ -84,9 +85,9 @@ export async function promptForApiKey(provider: ProviderId): Promise<{
     apiVersion = validation.apiVersion;
 
     if (isValid) {
-      console.log('Success!');
+      console.log(pc.green('Success!'));
     } else {
-      console.log('Invalid Key. Please try again.');
+      console.log(pc.red('Invalid Key. Please try again.'));
     }
   }
 
@@ -103,13 +104,13 @@ export async function promptForBraveKey(): Promise<string> {
       mask: '*',
     });
 
-    process.stdout.write('🔍 Validating key... ');
+    process.stdout.write('  Validating key... ');
     isValid = await validateBraveSearch(apiKey);
 
     if (isValid) {
-      console.log('Success!');
+      console.log(pc.green('Success!'));
     } else {
-      console.log('Invalid Key. Please try again.');
+      console.log(pc.red('Invalid Key. Please try again.'));
     }
   }
 
@@ -117,6 +118,11 @@ export async function promptForBraveKey(): Promise<string> {
 }
 
 export async function promptForTelegramToken(): Promise<string> {
+  console.log(`\n  ${pc.bold(pc.cyan('Telegram Bot Setup Guide'))}`);
+  console.log(`  ${pc.dim('1. Search for')} ${pc.yellow('@BotFather')} ${pc.dim('on Telegram.')}`);
+  console.log(`  ${pc.dim('2. Send')} ${pc.bold('/newbot')} ${pc.dim('and follow the naming steps.')}`);
+  console.log(`  ${pc.dim('3. Copy the')} ${pc.bold('HTTP API token')} ${pc.dim('provided.')}\n`);
+
   let isValid = false;
   let token = '';
 
@@ -126,13 +132,13 @@ export async function promptForTelegramToken(): Promise<string> {
       mask: '*',
     });
 
-    process.stdout.write('🔍 Validating token... ');
+    process.stdout.write('  Validating token... ');
     isValid = await validateTelegramToken(token);
 
     if (isValid) {
-      console.log('Success!');
+      console.log(pc.green('Success!'));
     } else {
-      console.log('Invalid token. Please try again.');
+      console.log(pc.red('Invalid token. Please try again.'));
     }
   }
 
@@ -140,6 +146,13 @@ export async function promptForTelegramToken(): Promise<string> {
 }
 
 export async function promptForDiscordToken(): Promise<string> {
+  console.log(`\n  ${pc.bold(pc.cyan('Discord Bot Setup Guide'))}`);
+  console.log(`  ${pc.dim('1. Go to:')} ${pc.blue('https://discord.com/developers/applications')}`);
+  console.log(`  ${pc.dim('2. Create a')} ${pc.bold('New Application')} ${pc.dim('and navigate to the')} ${pc.bold('Bot')} ${pc.dim('tab.')}`);
+  console.log(`  ${pc.dim('3. Reset/Copy the')} ${pc.bold('Bot Token')}${pc.dim('.')}`);
+  console.log(`  ${pc.dim('4. ')}${pc.red(pc.bold('IMPORTANT:'))} ${pc.dim('Enable')} ${pc.yellow('Message Content Intent')} ${pc.dim('under Gateway Intents.')}`);
+  console.log(`  ${pc.dim('5. Use the')} ${pc.bold('URL Generator')} ${pc.dim('(OAuth2) to invite the bot with')} ${pc.bold('Administrator')} ${pc.dim('perms.')}\n`);
+
   let isValid = false;
   let token = '';
 
@@ -149,15 +162,28 @@ export async function promptForDiscordToken(): Promise<string> {
       mask: '*',
     });
 
-    process.stdout.write('🔍 Validating token... ');
+    process.stdout.write('  Validating token... ');
     isValid = await validateDiscordToken(token);
 
     if (isValid) {
-      console.log('Success!');
+      console.log(pc.green('Success!'));
     } else {
-      console.log('Invalid token. Please try again.');
+      console.log(pc.red('Invalid token. Please try again.'));
     }
   }
 
   return token;
+}
+
+export async function promptForGatewayPort(current?: number): Promise<number> {
+  const answer = await input({
+    message: 'Which port should the Gateway run on?',
+    default: (current || 18789).toString(),
+    validate: (val) => {
+      const p = parseInt(val, 10);
+      if (isNaN(p) || p < 1024 || p > 65535) return 'Enter a valid port between 1024 and 65535';
+      return true;
+    },
+  });
+  return parseInt(answer, 10);
 }

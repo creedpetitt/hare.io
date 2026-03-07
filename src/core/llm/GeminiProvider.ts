@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import {FunctionCallingMode, GoogleGenerativeAI} from '@google/generative-ai';
-import {LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions} from './LLMProvider.js';
+import {LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions, Usage} from './LLMProvider.js';
 import type {Message, Tool, ToolCall} from '../types.js';
 
 export class GeminiProvider implements LLMProvider {
@@ -37,7 +37,13 @@ export class GeminiProvider implements LLMProvider {
 
     if (!onDelta) {
       const result = await model.generateContent(request, { signal: options?.abortSignal });
-      return this.parseResponse(result.response);
+      const usage: Usage | undefined = result.response.usageMetadata ? {
+        promptTokens: result.response.usageMetadata.promptTokenCount,
+        completionTokens: result.response.usageMetadata.candidatesTokenCount,
+        totalTokens: result.response.usageMetadata.totalTokenCount,
+      } : undefined;
+      const parsed = this.parseResponse(result.response);
+      return { ...parsed, usage };
     }
 
     const streamResult = await model.generateContentStream(request, {
@@ -59,9 +65,14 @@ export class GeminiProvider implements LLMProvider {
     }
 
     const final = await streamResult.response;
+    const usage: Usage | undefined = final.usageMetadata ? {
+      promptTokens: final.usageMetadata.promptTokenCount,
+      completionTokens: final.usageMetadata.candidatesTokenCount,
+      totalTokens: final.usageMetadata.totalTokenCount,
+    } : undefined;
     const parsed = this.parseResponse(final);
     if (!parsed.content) parsed.content = content || null;
-    return parsed;
+    return { ...parsed, usage };
   }
 
   private buildRequest(systemPrompt: string, history: Message[], tools?: Tool<any>[]) {

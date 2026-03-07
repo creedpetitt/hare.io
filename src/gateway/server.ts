@@ -13,7 +13,7 @@ import {
   isGatewayFrame,
   isConnectRequest,
   PROTOCOL_VERSION,
-  parseGatewayRequest,
+  parseGatewayRequest, AgentUsageEventPayload,
 } from './protocol.js';
 import { getGatewayToken, validateToken } from './auth.js';
 import { Agent } from '../core/Agent.js';
@@ -25,6 +25,7 @@ import { readIdempotency, storeIdempotency } from './idempotency.js';
 import { buildResponse, sendResponse, sendEvent, sendError } from './responses.js';
 import { startTelegramChannel, stopTelegramChannel } from './channels/telegram.js';
 import { startDiscordChannel, stopDiscordChannel } from './channels/discord.js';
+import { startScheduler, stopScheduler } from './scheduler.js';
 import { parseStandaloneSlashCommand } from './commands/parse.js';
 import { dispatchGatewayCommand } from './commands/dispatch.js';
 import { resolveSkillInvocation } from './commands/skill.js';
@@ -40,7 +41,7 @@ const DEFAULT_PORT = 18789;
 const DEFAULT_TICK_INTERVAL_MS = 15000;
 const DEFAULT_MAX_PAYLOAD_BYTES = 2_000_000;
 const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
-const AGENT_TIMEOUT_MS = 30_000;
+const AGENT_TIMEOUT_MS = 300_000;
 const REQUEST_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
 const IDEMPOTENCY_TTL_MS = 120_000;
@@ -411,6 +412,8 @@ async function handleAgentRequest(
         startedAt,
       });
 
+      let lastUsage: AgentUsageEventPayload | undefined;
+
       const agent = new Agent(
         sessionId,
         llm,
@@ -452,6 +455,10 @@ async function handleAgentRequest(
           assistantObserver: {
             onAssistantDelta: (assistantRunId, delta, index) =>
               streamEmitter.enqueue(assistantRunId, delta, index),
+            onUsage: (usageRunId, usage) => {
+              lastUsage = { runId: usageRunId, ...usage };
+              emitAgentUsage(socket, lastUsage);
+            },
           },
         }
       );
@@ -472,7 +479,7 @@ async function handleAgentRequest(
           summary: result,
         });
 
-        const response = buildResponse(request.id, true, { runId, status: 'ok', summary: result });
+        const response = buildResponse(request.id, true, { runId, status: 'ok', summary: result, usage: lastUsage });
         sendResponse(socket, response);
         storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
       } catch (error: any) {
@@ -499,6 +506,7 @@ async function handleAgentRequest(
           runId,
           status: isCancelled ? 'cancelled' : 'error',
           error: errorPayload,
+          usage: lastUsage,
         });
         sendResponse(socket, response);
         storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
@@ -522,6 +530,10 @@ async function handleAgentRequest(
 
 function emitAgentLifecycle(socket: WebSocket, payload: AgentLifecycleEventPayload) {
   sendEvent(socket, 'agent.lifecycle', payload);
+}
+
+function emitAgentUsage(socket: WebSocket, payload: AgentUsageEventPayload) {
+  sendEvent(socket, 'agent.usage', payload);
 }
 
 function emitToolStream(socket: WebSocket, payload: ToolStreamEventPayload) {
@@ -552,16 +564,19 @@ async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promis
 
 async function start() {
   const app = await buildServer();
-  const port = Number(process.env.GATEWAY_PORT) || DEFAULT_PORT;
+  const config = await loadConfig();
+  const port = Number(process.env.GATEWAY_PORT) || config.gateway?.port || DEFAULT_PORT;
   await app.listen({ port, host: '127.0.0.1' });
   await startTelegramChannel();
   await startDiscordChannel();
+  await startScheduler();
 
   const shutdown = async (signal: string) => {
     try {
       app.log.info({ signal }, 'Gateway shutting down');
       await stopTelegramChannel();
       await stopDiscordChannel();
+      await stopScheduler();
       await app.close();
       process.exit(0);
     } catch (error) {

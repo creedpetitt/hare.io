@@ -65,6 +65,7 @@ export class ContextBuilder {
         '# Tool Usage Conventions\n- Use web_search/web_fetch for live web data.\n- Use search_history for older compacted memory context.\n- Use filesystem tools for reading/writing local files.',
       'IDENTITY.md': 'Name: Harebot\nEmoji: 🐰\nVersion: 1.0.0',
       'USER.md': 'User: Admin\nPreferences: Concise answers.',
+      'HEARTBEAT.md': '# Heartbeat Checklist\n\n- Review recent memory and active tasks.\n- If nothing needs attention, reply exactly with HEARTBEAT_OK.\n- If something is urgent, provide a brief update.',
     };
 
     for (const [file, content] of Object.entries(defaults)) {
@@ -99,9 +100,10 @@ export class ContextBuilder {
       this.loadBootstrapFile('TOOLS.md', maxChars),
       this.loadBootstrapFile('IDENTITY.md', maxChars),
       this.loadBootstrapFile('USER.md', maxChars),
+      this.loadBootstrapFile('HEARTBEAT.md', maxChars),
     ]);
-    const [soul, agents, tools, identity, user] = entries;
-    return { soul, agents, tools, identity, user };
+    const [soul, agents, tools, identity, user, heartbeat] = entries;
+    return { soul, agents, tools, identity, user, heartbeat };
   }
 
   private async loadBootstrapFile(name: string, maxChars: number): Promise<string> {
@@ -266,6 +268,11 @@ export class ContextBuilder {
         defaults: {
           timeoutMs: 10_000,
           maxResultBytes: 1_000_000,
+        },
+        byTool: {
+          sessions_spawn: {
+            timeoutMs: 120_000,
+          },
         },
       },
       ...configOverride,

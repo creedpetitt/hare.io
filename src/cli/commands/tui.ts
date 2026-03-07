@@ -2,6 +2,7 @@ import type { ParsedArgs } from '@cli/args.js';
 import type { CommandResult } from '@cli/commands/index.js';
 import { ensureAuthenticated } from '@cli/setup/index.js';
 import { startTui } from '@tui/index.js';
+import { getGatewayUrl } from '@core/config.js';
 
 type TuiCommandOptions = {
   agentId: string;
@@ -11,12 +12,12 @@ type TuiCommandOptions = {
   gatewayToken?: string;
 };
 
-function parseTuiOptions(args: ParsedArgs): TuiCommandOptions {
+async function parseTuiOptions(args: ParsedArgs): Promise<TuiCommandOptions> {
   const tokens = args.commandArgs;
   let agentId = args.agentId;
   let sessionId = 'main';
   let profile = args.profile;
-  let gatewayUrl = process.env.HARE_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
+  let gatewayUrl = await getGatewayUrl();
   let gatewayToken = process.env.HARE_GATEWAY_TOKEN;
 
   for (let i = 0; i < tokens.length; i++) {
@@ -52,7 +53,7 @@ function parseTuiOptions(args: ParsedArgs): TuiCommandOptions {
 }
 
 export async function handleTuiCommand(args: ParsedArgs): Promise<CommandResult> {
-  const options = parseTuiOptions(args);
+  const options = await parseTuiOptions(args);
 
   await ensureAuthenticated();
   const exitCode = await startTui(options);

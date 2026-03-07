@@ -58,3 +58,16 @@ export async function stopTelegramChannel(): Promise<void> {
   active = undefined;
   await current.stop();
 }
+
+export async function broadcastTelegramMessage(message: string): Promise<void> {
+  if (!active) return;
+  const config = await loadConfig();
+  const allowFrom = config.channels?.telegram?.allowFrom ?? [];
+  for (const chatId of allowFrom) {
+    try {
+      await active.send(chatId, message);
+    } catch (e: any) {
+      console.error(`[telegram] Failed to broadcast to ${chatId}: ${e.message}`);
+    }
+  }
+}
