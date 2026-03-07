@@ -38,3 +38,12 @@ export async function listSessionKeys(agentId: string): Promise<string[]> {
   withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return withMtime.map((item) => item.key);
 }
+
+export function resolveContextWindow(modelLabel: string): number {
+  const lower = modelLabel.toLowerCase();
+  if (lower.includes('gpt-4o') || lower.includes('gpt-4-turbo') || lower.includes('o1')) return 128_000;
+  if (lower.includes('claude-3-5') || lower.includes('claude-3-opus')) return 200_000;
+  if (lower.includes('gemini-1.5-pro')) return 2_000_000;
+  if (lower.includes('gemini-1.5-flash')) return 1_000_000;
+  return 0;
+}

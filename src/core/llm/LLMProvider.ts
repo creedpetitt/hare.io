@@ -1,8 +1,15 @@
 import { Message, Tool, ToolCall } from '../types.js';
 
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface LLMResponse {
   content: string | null;
   toolCalls?: ToolCall[];
+  usage?: Usage;
 }
 
 export type StreamDeltaHandler = (delta: string) => void;

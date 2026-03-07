@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { resolveContextWindow } from '../utils.js';
 
 export type StatusBarProps = {
   agentId: string;
@@ -7,6 +8,7 @@ export type StatusBarProps = {
   runState: 'idle' | 'running' | 'error';
   currentToolName?: string;
   modelLabel: string;
+  tokens?: { prompt: number; completion: number; total: number };
 };
 
 export function StatusBar({
@@ -15,9 +17,19 @@ export function StatusBar({
   runState,
   currentToolName,
   modelLabel,
+  tokens,
 }: StatusBarProps) {
   const isRunning = runState === 'running';
   const columns = process.stdout.columns || 80;
+
+  const contextWindow = resolveContextWindow(modelLabel);
+  const contextUsage = tokens ? tokens.prompt : 0;
+  const percentage = contextWindow > 0 ? Math.round((contextUsage / contextWindow) * 100) : 0;
+  const limitStr = contextWindow > 0 ? `${contextWindow / 1000}k` : '?k';
+
+  const tokenStr = tokens
+    ? `tokens ${Math.round(tokens.prompt / 100) / 10}k/${limitStr} (${percentage}%)`
+    : `tokens ?/${limitStr}`;
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -36,7 +48,7 @@ export function StatusBar({
       </Box>
       <Box>
         <Text color="#888888">
-          agent {agentId} | session {sessionId} (hare-tui) | {modelLabel}
+          agent {agentId} | session {sessionId} (hare-tui) | {modelLabel} | {tokenStr}
         </Text>
       </Box>
       <Box>

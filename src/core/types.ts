@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { Usage } from './llm/LLMProvider.js';
+
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface ToolCall {
@@ -93,6 +95,7 @@ export interface ToolExecutionObserver {
 
 export interface AssistantStreamObserver {
   onAssistantDelta?: (runId: string, delta: string, index: number) => void;
+  onUsage?: (runId: string, usage: Usage) => void;
 }
 
 export interface ToolError {

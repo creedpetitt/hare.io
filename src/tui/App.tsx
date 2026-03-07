@@ -30,6 +30,7 @@ export function App({
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [profile, setProfile] = useState(initialProfile || 'default');
   const [modelLabel, setModelLabel] = useState('loading...');
+  const [tokens, setTokens] = useState<{ prompt: number; completion: number; total: number } | undefined>();
   
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [runState, setRunState] = useState<'idle' | 'running' | 'error'>('idle');
@@ -128,6 +129,7 @@ export function App({
 
     setRunState('running');
     setCurrentTool(undefined);
+    setTokens(undefined);
 
     try {
       const finalSummary = await runPrompt(text, {
@@ -156,6 +158,13 @@ export function App({
              setCurrentTool(undefined);
              updateToolMessage(payload.toolName, 'error', payload.error?.message);
            }
+        },
+        onUsage: (payload) => {
+          setTokens({
+            prompt: payload.promptTokens,
+            completion: payload.completionTokens,
+            total: payload.totalTokens
+          });
         }
       });
       setRunState('idle');
@@ -198,6 +207,7 @@ export function App({
         runState={runState}
         currentToolName={currentTool}
         modelLabel={modelLabel}
+        tokens={tokens}
       />
       <InputBar onSubmit={handleSubmit} isDisabled={runState === 'running'} />
     </Box>

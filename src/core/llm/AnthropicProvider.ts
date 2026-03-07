@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions } from './LLMProvider.js';
+import { LLMProvider, LLMResponse, StreamDeltaHandler, StreamOptions, Usage } from './LLMProvider.js';
 import { Message, Tool, ToolCall } from '../types.js';
 
 export class AnthropicProvider implements LLMProvider {
@@ -42,7 +42,13 @@ export class AnthropicProvider implements LLMProvider {
         messages: messages as any,
         tools: anthropicTools,
       });
-      return this.parseResponse(response);
+      const usage: Usage = {
+        promptTokens: response.usage.input_tokens,
+        completionTokens: response.usage.output_tokens,
+        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+      };
+      const parsed = this.parseResponse(response);
+      return { ...parsed, usage };
     }
 
     const stream = this.anthropic.messages.stream({
@@ -85,9 +91,20 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     try {
-      await stream.done();
+      const finalMessage = await stream.finalMessage();
+      const usage: Usage = {
+        promptTokens: finalMessage.usage.input_tokens,
+        completionTokens: finalMessage.usage.output_tokens,
+        totalTokens: finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
+      };
+
+      return {
+        content: content || null,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        usage,
+      };
     } catch (error: any) {
-      if (error?.name === 'APIUserAbortError') {
+      if (error?.name === 'APIUserAbortError' || error?.message?.includes('aborted')) {
         const err: any = new Error('Stream aborted');
         err.code = 'agent_cancelled';
         throw err;
@@ -98,11 +115,6 @@ export class AnthropicProvider implements LLMProvider {
         abortSignal.removeEventListener('abort', onAbort);
       }
     }
-
-    return {
-      content: content || null,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    };
   }
 
   private mapMessage(m: Message) {

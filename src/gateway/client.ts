@@ -8,6 +8,7 @@ import {
   type GatewayFrame,
   type GatewayResponse,
   type ToolStreamEventPayload,
+  type AgentUsageEventPayload,
 } from './protocol.js';
 
 export type GatewayClientOptions = {
@@ -30,8 +31,9 @@ export class GatewayClient {
   private scopes: string[];
   private onStream?: (delta: string) => void;
   private onTool?: (payload: ToolStreamEventPayload) => void;
+  private onUsage?: (payload: AgentUsageEventPayload) => void;
 
-  constructor(options: GatewayClientOptions & { onStream?: (delta: string) => void; onTool?: (payload: ToolStreamEventPayload) => void }) {
+  constructor(options: GatewayClientOptions & { onStream?: (delta: string) => void; onTool?: (payload: ToolStreamEventPayload) => void; onUsage?: (payload: AgentUsageEventPayload) => void }) {
     this.url = options.url;
     this.token = options.token;
     this.clientId = options.clientId || 'cli';
@@ -41,6 +43,7 @@ export class GatewayClient {
     this.scopes = options.scopes || ['operator.read', 'operator.write'];
     this.onStream = options.onStream;
     this.onTool = options.onTool;
+    this.onUsage = options.onUsage;
   }
 
   async runAgent(
@@ -93,7 +96,7 @@ export class GatewayClient {
         params,
       });
 
-      if (this.onStream) {
+      if (this.onStream || this.onTool || this.onUsage) {
         this.listenForStreamEvents(socket, requestId);
       }
       if (abortSignal) {
@@ -123,14 +126,23 @@ export class GatewayClient {
           if (!accepted) {
             throw new Error('Agent run ended without acceptance.');
           }
+          if (payload.usage) {
+            this.onUsage?.(payload.usage);
+          }
           return payload.summary;
         }
 
         if (payload.status === 'error') {
+          if (payload.usage) {
+            this.onUsage?.(payload.usage);
+          }
           throw new Error(payload.error?.message || 'Agent run failed.');
         }
 
         if (payload.status === 'cancelled') {
+          if (payload.usage) {
+            this.onUsage?.(payload.usage);
+          }
           throw new Error(payload.error?.message || 'Agent run cancelled.');
         }
       }
@@ -279,6 +291,10 @@ export class GatewayClient {
 
       if (parsed.type === 'event' && parsed.event === 'agent.tool') {
         this.onTool?.(parsed.payload as ToolStreamEventPayload);
+      }
+
+      if (parsed.type === 'event' && parsed.event === 'agent.usage') {
+        this.onUsage?.(parsed.payload as AgentUsageEventPayload);
       }
 
       if (parsed.type === 'res' && parsed.id === requestId) {

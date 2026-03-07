@@ -110,16 +110,19 @@ export type AgentFinalPayload =
       runId: string;
       status: 'ok';
       summary: string;
+      usage?: AgentUsageEventPayload;
     }
   | {
       runId: string;
       status: 'error';
       error: { code: string; message: string };
+      usage?: AgentUsageEventPayload;
     }
   | {
       runId: string;
       status: 'cancelled';
       error: { code: string; message: string };
+      usage?: AgentUsageEventPayload;
     };
 
 export type AgentLifecyclePhase = 'start' | 'end' | 'error';
@@ -141,6 +144,13 @@ export type AgentStreamEventPayload = {
   runId: string;
   delta: string;
   index: number;
+};
+
+export type AgentUsageEventPayload = {
+  runId: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
 };
 
 export type ToolStreamEventPayload = {
