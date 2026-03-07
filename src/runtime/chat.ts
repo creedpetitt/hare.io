@@ -1,5 +1,6 @@
 import { loadConfig } from '@core/config.js';
 import { GatewayClient } from '@gateway/client.js';
+import type { ToolStreamEventPayload } from '@gateway/protocol.js';
 
 export type RunPromptOptions = {
   agentId: string;
@@ -8,6 +9,7 @@ export type RunPromptOptions = {
   gatewayUrl: string;
   gatewayToken?: string;
   onStream?: (delta: string) => void;
+  onTool?: (payload: ToolStreamEventPayload) => void;
   abortSignal?: AbortSignal;
 };
 
@@ -30,6 +32,7 @@ export async function runPrompt(prompt: string, options: RunPromptOptions): Prom
     clientMode: 'operator',
     scopes: ['operator.read', 'operator.write'],
     onStream: options.onStream,
+    onTool: options.onTool,
   });
 
   try {

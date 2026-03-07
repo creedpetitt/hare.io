@@ -7,6 +7,7 @@ import {
   type AgentAcceptedPayload,
   type GatewayFrame,
   type GatewayResponse,
+  type ToolStreamEventPayload,
 } from './protocol.js';
 
 export type GatewayClientOptions = {
@@ -28,8 +29,9 @@ export class GatewayClient {
   private clientMode: string;
   private scopes: string[];
   private onStream?: (delta: string) => void;
+  private onTool?: (payload: ToolStreamEventPayload) => void;
 
-  constructor(options: GatewayClientOptions & { onStream?: (delta: string) => void }) {
+  constructor(options: GatewayClientOptions & { onStream?: (delta: string) => void; onTool?: (payload: ToolStreamEventPayload) => void }) {
     this.url = options.url;
     this.token = options.token;
     this.clientId = options.clientId || 'cli';
@@ -38,6 +40,7 @@ export class GatewayClient {
     this.clientMode = options.clientMode || 'operator';
     this.scopes = options.scopes || ['operator.read', 'operator.write'];
     this.onStream = options.onStream;
+    this.onTool = options.onTool;
   }
 
   async runAgent(
@@ -272,6 +275,10 @@ export class GatewayClient {
       if (parsed.type === 'event' && parsed.event === 'agent.stream') {
         const delta = (parsed.payload as { delta?: string } | undefined)?.delta;
         if (delta) this.onStream?.(delta);
+      }
+
+      if (parsed.type === 'event' && parsed.event === 'agent.tool') {
+        this.onTool?.(parsed.payload as ToolStreamEventPayload);
       }
 
       if (parsed.type === 'res' && parsed.id === requestId) {
