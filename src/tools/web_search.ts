@@ -100,7 +100,8 @@ async function runBraveSearch(
   apiKey: string,
   timeoutMs: number,
   country?: string,
-  searchLang?: string
+  searchLang?: string,
+  retryCount = 0
 ): Promise<WebSearchOutput> {
   const endpoint = new URL('https://api.search.brave.com/res/v1/web/search');
   endpoint.searchParams.set('q', query);
@@ -120,6 +121,13 @@ async function runBraveSearch(
       },
       signal: abortController.signal,
     });
+
+    if (response.status === 429 && retryCount < 1) {
+      // Free tier rate limit is 1 req/sec. Wait and retry once.
+      clearTimeout(timeoutId);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return runBraveSearch(query, maxResults, apiKey, timeoutMs, country, searchLang, retryCount + 1);
+    }
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');

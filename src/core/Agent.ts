@@ -467,12 +467,27 @@ export class Agent {
   }
 
   private serializeToolResult(result: ToolResult): string {
-    return JSON.stringify({
+    const serialized = JSON.stringify({
       toolName: result.toolName,
       success: result.success,
       result: result.result,
       error: result.error ?? null,
     });
+
+    // If the result is massive (e.g. search dump or large file), 
+    // truncate it for the long-term history to save context.
+    const MAX_HISTORY_RESULT_CHARS = 4000;
+    if (serialized.length > MAX_HISTORY_RESULT_CHARS) {
+      return JSON.stringify({
+        toolName: result.toolName,
+        success: result.success,
+        result: result.result.slice(0, MAX_HISTORY_RESULT_CHARS) + `... [TRUNCATED ${result.result.length - MAX_HISTORY_RESULT_CHARS} CHARS]`,
+        error: result.error ?? null,
+        note: "Result truncated in history to save context tokens."
+      });
+    }
+
+    return serialized;
   }
 
   private throwIfAborted() {
