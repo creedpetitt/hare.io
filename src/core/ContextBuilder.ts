@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { AgentConfig, AgentContext, BootstrapFiles, Message, SkillDefinition } from './types.js';
-import { sanitizeHistory } from './history.js';
+import { sanitizeHistory } from './HistoryManager.js';
 import { SkillsLoader, type SkillCatalogEntry } from './skills/SkillsLoader.js';
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.hareio');

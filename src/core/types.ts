@@ -80,12 +80,19 @@ export interface AgentContext {
   skills: SkillDefinition[];
 }
 
-export interface ToolResult {
-  toolName: string;
-  success: boolean;
-  result: string;
-  error?: ToolError;
-}
+export type ToolResult =
+  | {
+      toolName: string;
+      success: true;
+      result: string;
+      error?: never;
+    }
+  | {
+      toolName: string;
+      success: false;
+      result: string;
+      error: ToolError;
+    };
 
 export interface ToolExecutionObserver {
   onToolStart?: (runId: string, toolName: string, input: unknown) => void;

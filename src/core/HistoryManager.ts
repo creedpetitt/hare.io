@@ -1,4 +1,4 @@
-import type { Message } from './types.js';
+import type { Message, ToolCall } from './types.js';
 
 export type SanitizedHistory = {
   messages: Message[];
@@ -30,6 +30,8 @@ export function sanitizeHistory(messages: Message[]): SanitizedHistory {
 
   for (const originalMessage of messages) {
     let message = originalMessage;
+    
+    // Normalize null content from some providers
     if (message.role === 'assistant' && message.content === null) {
       message = {
         ...message,
@@ -64,17 +66,61 @@ export function sanitizeHistory(messages: Message[]): SanitizedHistory {
       continue;
     }
 
+    // For user or system messages, clear any pending state
     clearDanglingAssistantToolCalls();
     sanitized.push(message);
     pendingToolCalls.clear();
     pendingAssistantIndex = undefined;
   }
 
+  // Final check at the end of history
   clearDanglingAssistantToolCalls();
+  
   return {
     messages: sanitized,
     droppedInvalidTools,
     normalizedAssistantContent,
     removedDanglingToolCalls,
   };
+}
+
+export function estimateHistoryTokens(history: Message[]): number {
+  let totalChars = 0;
+  for (const msg of history) {
+    totalChars += (msg.content || '').length;
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        totalChars += tc.function.name.length + tc.function.arguments.length;
+      }
+    }
+  }
+  // Rough industry standard: 4 characters per token
+  return Math.ceil(totalChars / 4);
+}
+
+export function formatHistoryEntry(sessionId: string, summary: string): string {
+  const timestamp = new Date().toISOString();
+  return [`## ${timestamp} session:${sessionId}`, 'Summary:', summary].join('\n');
+}
+
+export function serializeToolResultForHistory(result: any): string {
+  const serialized = JSON.stringify({
+    toolName: result.toolName,
+    success: result.success,
+    result: result.result,
+    error: result.error ?? null,
+  });
+
+  const MAX_HISTORY_RESULT_CHARS = 4000;
+  if (serialized.length > MAX_HISTORY_RESULT_CHARS) {
+    return JSON.stringify({
+      toolName: result.toolName,
+      success: result.success,
+      result: result.result.slice(0, MAX_HISTORY_RESULT_CHARS) + `... [TRUNCATED ${result.result.length - MAX_HISTORY_RESULT_CHARS} CHARS]`,
+      error: result.error ?? null,
+      note: "Result truncated in history to save context tokens."
+    });
+  }
+
+  return serialized;
 }

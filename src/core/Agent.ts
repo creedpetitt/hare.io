@@ -12,9 +12,13 @@ import {
   SkillDefinition,
 } from './types.js';
 import { LLMProvider, LLMResponse, Usage } from './llm/LLMProvider.js';
-import { Compactor } from './memory/Compactor.js';
 import { ToolRegistry } from './ToolRegistry.js';
-import { sanitizeHistory } from './history.js';
+import { 
+  sanitizeHistory, 
+  estimateHistoryTokens, 
+  formatHistoryEntry, 
+  serializeToolResultForHistory 
+} from './HistoryManager.js';
 
 export class Agent {
   private llm: LLMProvider;
@@ -23,7 +27,6 @@ export class Agent {
   private agentId: string;
   private config: AgentConfig;
   private tools: Tool<any>[] = [];
-  private compactor: Compactor;
   private runId: string;
   private abortController?: AbortController;
   private toolObserver?: ToolExecutionObserver;
@@ -41,13 +44,13 @@ export class Agent {
       abortSignal?: AbortSignal;
       toolObserver?: ToolExecutionObserver;
       assistantObserver?: AssistantStreamObserver;
+      baseDir?: string;
     }
   ) {
     this.sessionId = sessionId;
     this.llm = llm;
     this.agentId = agentId;
-    this.contextBuilder = new ContextBuilder(undefined, agentId);
-    this.compactor = new Compactor(llm);
+    this.contextBuilder = new ContextBuilder(options?.baseDir, agentId);
     this.runId = options?.runId || 'run';
     if (options?.abortSignal) {
       this.abortController = new AbortController();
@@ -196,7 +199,7 @@ export class Agent {
     this.tools = ToolRegistry.getTools(this.config.tools);
 
     const maxHistoryTokens = 32_000;
-    const estimatedTokens = this.estimateHistoryTokens(context.history);
+    const estimatedTokens = estimateHistoryTokens(context.history);
 
     if (
       context.history.length > this.config.compactionThreshold ||
@@ -217,27 +220,15 @@ export class Agent {
     return context;
   }
 
-  private estimateHistoryTokens(history: Message[]): number {
-    let totalChars = 0;
-    for (const msg of history) {
-      totalChars += (msg.content || '').length;
-      if (msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
-          totalChars += tc.function.name.length + tc.function.arguments.length;
-        }
-      }
-    }
-    // Rough industry standard: 4 characters per token
-    return Math.ceil(totalChars / 4);
-  }
-
   private async performCompaction(context: AgentContext) {
+    const { Compactor } = await import('./memory/Compactor.js');
+    const compactor = new Compactor(this.llm);
     const keepCount = this.config.compactionKeep;
     const toCompact = context.history.slice(0, -keepCount);
     if (toCompact.length === 0) return;
 
     const currentMemory = await this.contextBuilder.loadMemorySnapshot();
-    const result = await this.compactor.compact(toCompact, currentMemory, this.sessionId);
+    const result = await compactor.compact(toCompact, currentMemory, this.sessionId);
     const historySummary = result.historyEntry.trim();
     if (historySummary) {
       const historyEntry = formatHistoryEntry(this.sessionId, historySummary);
@@ -296,9 +287,6 @@ export class Agent {
           if (this.config.debug) console.log(`[TOOL CALL] ${tool.name}(${tc.function.arguments})`);
           this.toolObserver?.onToolStart?.(this.runId, tool.name, args);
 
-          // Execution is now type-safe!
-          // Even though 'tool' is Tool<any>, zod inside the tool
-          // will validate 'args' during the internal execute call.
           const effectivePolicy = this.resolveToolPolicy(tool.name, policyConfig);
           const execution = await runWithTimeout(
             tool.execute(args, context),
@@ -306,22 +294,15 @@ export class Agent {
           );
           result = this.enforceResultLimits(execution, effectivePolicy);
 
-          if (!result.success && !result.error) {
-            result = {
-              ...result,
-              error: { code: 'tool_error', message: result.result },
-            };
-          }
-
           if (result.success) {
             this.toolObserver?.onToolEnd?.(this.runId, tool.name, result);
-          } else if (result.error) {
+          } else {
             this.toolObserver?.onToolError?.(this.runId, tool.name, result.error);
           }
 
           if (this.config.debug) {
             const status = result.success ? 'ok' : 'error';
-            const code = result.error?.code ? ` ${result.error.code}` : '';
+            const code = !result.success ? ` ${result.error.code}` : '';
             console.log(`[TOOL RESULT] ${status}${code}`);
           }
         } catch (e: any) {
@@ -333,9 +314,7 @@ export class Agent {
             result: `Error: ${message}`,
             error: { code, message },
           };
-          if (result.error) {
-            this.toolObserver?.onToolError?.(this.runId, tool.name, result.error);
-          }
+          this.toolObserver?.onToolError?.(this.runId, tool.name, result.error);
         }
       }
 
@@ -343,7 +322,7 @@ export class Agent {
         role: 'tool',
         name: tc.function.name,
         tool_call_id: tc.id,
-        content: this.serializeToolResult(result),
+        content: serializeToolResultForHistory(result),
         timestamp: Date.now(),
       };
 
@@ -466,30 +445,6 @@ export class Agent {
     return result;
   }
 
-  private serializeToolResult(result: ToolResult): string {
-    const serialized = JSON.stringify({
-      toolName: result.toolName,
-      success: result.success,
-      result: result.result,
-      error: result.error ?? null,
-    });
-
-    // If the result is massive (e.g. search dump or large file), 
-    // truncate it for the long-term history to save context.
-    const MAX_HISTORY_RESULT_CHARS = 4000;
-    if (serialized.length > MAX_HISTORY_RESULT_CHARS) {
-      return JSON.stringify({
-        toolName: result.toolName,
-        success: result.success,
-        result: result.result.slice(0, MAX_HISTORY_RESULT_CHARS) + `... [TRUNCATED ${result.result.length - MAX_HISTORY_RESULT_CHARS} CHARS]`,
-        error: result.error ?? null,
-        note: "Result truncated in history to save context tokens."
-      });
-    }
-
-    return serialized;
-  }
-
   private throwIfAborted() {
     if (this.abortController?.signal.aborted) {
       const err: any = new Error('Agent run cancelled.');
@@ -584,9 +539,4 @@ function uniqueNames(values: string[]): string[] {
     result.push(value);
   }
   return result;
-}
-
-function formatHistoryEntry(sessionId: string, summary: string): string {
-  const timestamp = new Date().toISOString();
-  return [`## ${timestamp} session:${sessionId}`, 'Summary:', summary].join('\n');
 }
