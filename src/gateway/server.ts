@@ -30,6 +30,8 @@ import { parseStandaloneSlashCommand } from './commands/parse.js';
 import { dispatchGatewayCommand } from './commands/dispatch.js';
 import { resolveSkillInvocation } from './commands/skill.js';
 
+import { createStreamEmitter, type StreamEmitter } from './StreamManager.js';
+
 type ConnectionState = {
   connected: boolean;
   requestCount: number;
@@ -38,131 +40,10 @@ type ConnectionState = {
 };
 
 const DEFAULT_PORT = 18789;
-const DEFAULT_TICK_INTERVAL_MS = 15000;
-const DEFAULT_MAX_PAYLOAD_BYTES = 2_000_000;
-const DEFAULT_MAX_BUFFERED_BYTES = 5_000_000;
 const AGENT_TIMEOUT_MS = 300_000;
 const REQUEST_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 25;
 const IDEMPOTENCY_TTL_MS = 120_000;
-const STREAM_FLUSH_INTERVAL_MS = 30;
-const STREAM_MAX_DELTA_CHARS = 8_000;
-const STREAM_BACKPRESSURE_LIMIT_BYTES = 1_000_000;
-const STREAM_BACKPRESSURE_RETRY_MS = 60;
-const STREAM_MAX_BACKPRESSURE_CHARS = 20_000;
-const SOCKET_OPEN_STATE = 1;
-
-type StreamState = {
-  buffer: string;
-  lastIndex: number;
-  timer?: NodeJS.Timeout;
-  retryTimer?: NodeJS.Timeout;
-  backpressure: boolean;
-};
-
-type StreamEmitter = {
-  enqueue: (runId: string, delta: string, index: number) => void;
-  finalize: (runId: string) => void;
-  shutdown: () => void;
-};
-
-function createStreamEmitter(socket: WebSocket): StreamEmitter {
-  const streams = new Map<string, StreamState>();
-
-  const canSend = () =>
-    socket.readyState === SOCKET_OPEN_STATE &&
-    socket.bufferedAmount < STREAM_BACKPRESSURE_LIMIT_BYTES;
-
-  const getState = (runId: string) => {
-    const existing = streams.get(runId);
-    if (existing) return existing;
-    const created: StreamState = { buffer: '', lastIndex: 0, backpressure: false };
-    streams.set(runId, created);
-    return created;
-  };
-
-  const flush = (runId: string) => {
-    const state = streams.get(runId);
-    if (!state || !state.buffer) return;
-    if (!canSend()) {
-      state.backpressure = true;
-      scheduleRetry(runId, state);
-      return;
-    }
-
-    state.backpressure = false;
-    const payload: AgentStreamEventPayload = {
-      runId,
-      delta: state.buffer,
-      index: state.lastIndex,
-    };
-    state.buffer = '';
-    sendEvent(socket, 'agent.stream', payload);
-  };
-
-  const scheduleFlush = (runId: string, state: StreamState) => {
-    if (state.timer) return;
-    state.timer = setTimeout(() => {
-      state.timer = undefined;
-      flush(runId);
-    }, STREAM_FLUSH_INTERVAL_MS);
-  };
-
-  const scheduleRetry = (runId: string, state: StreamState) => {
-    if (state.retryTimer) return;
-    state.retryTimer = setTimeout(() => {
-      state.retryTimer = undefined;
-      flush(runId);
-    }, STREAM_BACKPRESSURE_RETRY_MS);
-  };
-
-  const enqueue = (runId: string, delta: string, index: number) => {
-    if (!delta) return;
-    const state = getState(runId);
-    state.lastIndex = index;
-
-    if (state.backpressure) {
-      const next = `${state.buffer}${delta}`;
-      state.buffer = next.slice(-STREAM_MAX_BACKPRESSURE_CHARS);
-      scheduleRetry(runId, state);
-      return;
-    }
-
-    state.buffer += delta;
-    if (state.buffer.length >= STREAM_MAX_DELTA_CHARS) {
-      flush(runId);
-    } else {
-      scheduleFlush(runId, state);
-    }
-  };
-
-  const finalize = (runId: string) => {
-    const state = streams.get(runId);
-    if (!state) return;
-
-    if (state.timer) clearTimeout(state.timer);
-    if (state.retryTimer) clearTimeout(state.retryTimer);
-
-    if (state.buffer && canSend()) {
-      const payload: AgentStreamEventPayload = {
-        runId,
-        delta: state.buffer,
-        index: state.lastIndex,
-      };
-      sendEvent(socket, 'agent.stream', payload);
-    }
-
-    streams.delete(runId);
-  };
-
-  const shutdown = () => {
-    for (const runId of streams.keys()) {
-      finalize(runId);
-    }
-  };
-
-  return { enqueue, finalize, shutdown };
-}
 
 async function buildServer() {
   const app = Fastify({ logger: true });
@@ -192,6 +73,10 @@ async function buildServer() {
 
   return app;
 }
+
+import { handleConnect } from './methods/connect.js';
+import { handleAgent } from './methods/agent.js';
+import { handleCancel } from './methods/cancel.js';
 
 async function handleMessage(
   raw: Buffer,
@@ -230,7 +115,7 @@ async function handleMessage(
   const request = parsedRequest.request as GatewayRequest;
 
   if (request.idempotencyKey) {
-    const cached = readIdempotency(state, request.idempotencyKey);
+    const cached = readIdempotency(request.idempotencyKey);
     if (cached) {
       socket.send(JSON.stringify(cached));
       return;
@@ -249,69 +134,24 @@ async function handleMessage(
       return;
     }
 
-    if (!isProtocolCompatible(request.params.minProtocol, request.params.maxProtocol)) {
-      sendResponse(
-        socket,
-        buildResponse(request.id, false, undefined, {
-          code: 'protocol_mismatch',
-          message: `Unsupported protocol version. Server=${PROTOCOL_VERSION}`,
-        })
-      );
-      socket.close();
-      return;
-    }
-
-    const expectedToken = await getGatewayToken();
-    const providedToken = request.params.auth?.token;
-    if (!validateToken(expectedToken, providedToken)) {
-      sendResponse(
-        socket,
-        buildResponse(request.id, false, undefined, {
-          code: 'unauthorized',
-          message: 'Invalid gateway token',
-        })
-      );
-      socket.close();
-      return;
-    }
-
-    state.connected = true;
-    const response = buildResponse(request.id, true, {
-      type: 'hello-ok',
-      protocol: PROTOCOL_VERSION,
-      policy: {
-        tickIntervalMs: DEFAULT_TICK_INTERVAL_MS,
-        maxPayloadBytes: DEFAULT_MAX_PAYLOAD_BYTES,
-        maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
-      },
-    });
-    sendResponse(socket, response);
-    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+    await handleConnect(socket, request, state);
     return;
   }
 
   if (request.method === 'ping') {
     const response = buildResponse(request.id, true, { type: 'pong' });
     sendResponse(socket, response);
-    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+    storeIdempotency(request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
     return;
   }
 
   if (request.method === 'agent') {
-    void handleAgentRequest(socket, state, request, streamEmitter);
+    void handleAgent(socket, state, request, streamEmitter);
     return;
   }
 
   if (request.method === 'cancel') {
-    const runId = request.params.runId;
-    const cancelled = cancelRun(runId);
-    const response = buildResponse(request.id, true, {
-      runId,
-      status: cancelled ? 'cancelled' : 'not_found',
-      reason: request.params.reason,
-    });
-    sendResponse(socket, response);
-    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
+    handleCancel(socket, state, request);
     return;
   }
 
@@ -333,233 +173,6 @@ function recordRequest(state: ConnectionState): boolean {
 
   state.requestCount += 1;
   return state.requestCount <= MAX_REQUESTS_PER_WINDOW;
-}
-
-async function handleAgentRequest(
-  socket: WebSocket,
-  state: ConnectionState,
-  request: AgentRequest,
-  streamEmitter: StreamEmitter
-) {
-  const runId = crypto.randomUUID();
-  const queuedAt = Date.now();
-  const accepted = buildResponse(request.id, true, { runId, status: 'accepted' });
-  sendResponse(socket, accepted);
-  storeIdempotency(state, request.idempotencyKey, accepted, IDEMPOTENCY_TTL_MS);
-
-  try {
-    const params = request.params;
-    const sessionId = params.sessionId || 'main';
-    const agentId = params.agentId || 'main';
-    const parsedCommand = parseStandaloneSlashCommand(params.input);
-    let input = params.input;
-    let forcedSkills: string[] = [];
-    let toolConfigOverride:
-      | {
-          profile?: any;
-          allow?: string[];
-        }
-      | undefined;
-    if (parsedCommand && parsedCommand.name !== 'skill') {
-      const summary = await dispatchGatewayCommand(parsedCommand, {
-        agentId,
-        sessionId,
-        profile: params.profile,
-      });
-      const response = buildResponse(request.id, true, { runId, status: 'ok', summary });
-      sendResponse(socket, response);
-      storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
-      return;
-    }
-    if (parsedCommand?.name === 'skill') {
-      const resolved = await resolveSkillInvocation(agentId, parsedCommand.rawArgs);
-      if (!resolved.ok) {
-        const response = buildResponse(request.id, true, {
-          runId,
-          status: 'ok',
-          summary: resolved.message,
-        });
-        sendResponse(socket, response);
-        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
-        return;
-      }
-      input = resolved.input;
-      forcedSkills = resolved.forcedSkills;
-      if (!params.profile && resolved.toolOverride) {
-        toolConfigOverride = {
-          profile: resolved.toolOverride.profile as any,
-          allow: resolved.toolOverride.allow,
-        };
-      }
-    }
-
-    const { llm, model } = await getConfiguredLLM({
-      errorCode: 'unconfigured',
-      errorMessage: 'No API Key configured for OpenAI or Anthropic.',
-    });
-    const config = await loadConfig();
-    const activeRun = registerActiveRun({ runId, sessionId, agentId, queuedAt });
-
-    await getOrCreateSessionLane(sessionId).enqueue(async () => {
-      const startedAt = Date.now();
-      updateActiveRunStart(runId, startedAt);
-      emitAgentLifecycle(socket, {
-        runId,
-        sessionId,
-        agentId,
-        phase: 'start',
-        queuedAt,
-        startedAt,
-      });
-
-      let lastUsage: AgentUsageEventPayload | undefined;
-
-      const agent = new Agent(
-        sessionId,
-        llm,
-        agentId,
-        {
-          model,
-          debug: process.env.DEBUG === 'true',
-          tools: toolConfigOverride || (params.profile ? { profile: params.profile as any } : undefined),
-          maxToolIterations: config.agents?.defaults?.maxToolIterations,
-          bootstrapMaxChars: config.agents?.defaults?.bootstrapMaxChars,
-          skills: config.agents?.defaults?.skills,
-        },
-        {
-          runId,
-          abortSignal: activeRun.abortController.signal,
-          toolObserver: {
-            onToolStart: (toolRunId, toolName, input) =>
-              emitToolStream(socket, {
-                runId: toolRunId,
-                toolName,
-                phase: 'start',
-                input,
-              }),
-            onToolEnd: (toolRunId, toolName, output) =>
-              emitToolStream(socket, {
-                runId: toolRunId,
-                toolName,
-                phase: 'end',
-                output,
-              }),
-            onToolError: (toolRunId, toolName, error) =>
-              emitToolStream(socket, {
-                runId: toolRunId,
-                toolName,
-                phase: 'error',
-                error,
-              }),
-          },
-          assistantObserver: {
-            onAssistantDelta: (assistantRunId, delta, index) =>
-              streamEmitter.enqueue(assistantRunId, delta, index),
-            onUsage: (usageRunId, usage) => {
-              lastUsage = { runId: usageRunId, ...usage };
-              emitAgentUsage(socket, lastUsage);
-            },
-          },
-        }
-      );
-
-      try {
-        const result = await runWithTimeout(agent.run(input, { forcedSkills }), AGENT_TIMEOUT_MS);
-        const endedAt = Date.now();
-        streamEmitter.finalize(runId);
-        emitAgentLifecycle(socket, {
-          runId,
-          sessionId,
-          agentId,
-          phase: 'end',
-          status: 'ok',
-          queuedAt,
-          startedAt,
-          endedAt,
-          summary: result,
-        });
-
-        const response = buildResponse(request.id, true, { runId, status: 'ok', summary: result, usage: lastUsage });
-        sendResponse(socket, response);
-        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
-      } catch (error: any) {
-        const endedAt = Date.now();
-        const isCancelled = error?.code === 'agent_cancelled';
-        const errorPayload = {
-          code: error?.code || 'agent_error',
-          message: error?.message || 'Agent run failed',
-        };
-        streamEmitter.finalize(runId);
-        emitAgentLifecycle(socket, {
-          runId,
-          sessionId,
-          agentId,
-          phase: 'error',
-          status: isCancelled ? 'cancelled' : 'error',
-          queuedAt,
-          startedAt,
-          endedAt,
-          error: errorPayload,
-        });
-
-        const response = buildResponse(request.id, true, {
-          runId,
-          status: isCancelled ? 'cancelled' : 'error',
-          error: errorPayload,
-          usage: lastUsage,
-        });
-        sendResponse(socket, response);
-        storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
-      } finally {
-        removeActiveRun(runId);
-      }
-    });
-  } catch (error: any) {
-    const response = buildResponse(request.id, true, {
-      runId,
-      status: 'error',
-      error: {
-        code: error?.code || 'agent_error',
-        message: error?.message || 'Agent run failed',
-      },
-    });
-    sendResponse(socket, response);
-    storeIdempotency(state, request.idempotencyKey, response, IDEMPOTENCY_TTL_MS);
-  }
-}
-
-function emitAgentLifecycle(socket: WebSocket, payload: AgentLifecycleEventPayload) {
-  sendEvent(socket, 'agent.lifecycle', payload);
-}
-
-function emitAgentUsage(socket: WebSocket, payload: AgentUsageEventPayload) {
-  sendEvent(socket, 'agent.usage', payload);
-}
-
-function emitToolStream(socket: WebSocket, payload: ToolStreamEventPayload) {
-  sendEvent(socket, 'agent.tool', payload);
-}
-
-function isProtocolCompatible(minProtocol: number, maxProtocol: number): boolean {
-  if (minProtocol > maxProtocol) return false;
-  return PROTOCOL_VERSION >= minProtocol && PROTOCOL_VERSION <= maxProtocol;
-}
-
-async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const err: any = new Error('Agent timed out.');
-      err.code = 'agent_timeout';
-      reject(err);
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 }
 
 async function start() {

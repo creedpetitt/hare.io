@@ -2,35 +2,40 @@ import type { GatewayResponse } from './protocol.js';
 
 type CacheEntry = { response: GatewayResponse; expiresAt: number };
 
-type IdempotencyState = {
-  idempotencyCache: Map<string, CacheEntry>;
-};
+// Global cache to persist across client reconnections
+const globalIdempotencyCache = new Map<string, CacheEntry>();
 
-export function readIdempotency(state: IdempotencyState, key: string): GatewayResponse | undefined {
-  pruneIdempotency(state);
-  const entry = state.idempotencyCache.get(key);
+export function readIdempotency(key: string): GatewayResponse | undefined {
+  pruneIdempotency();
+  const entry = globalIdempotencyCache.get(key);
   if (!entry) return undefined;
   if (Date.now() > entry.expiresAt) {
-    state.idempotencyCache.delete(key);
+    globalIdempotencyCache.delete(key);
     return undefined;
   }
   return entry.response;
 }
 
 export function storeIdempotency(
-  state: IdempotencyState,
   key: string | undefined,
   response: GatewayResponse,
   ttlMs: number
 ): void {
   if (!key) return;
-  pruneIdempotency(state);
-  state.idempotencyCache.set(key, { response, expiresAt: Date.now() + ttlMs });
+  pruneIdempotency();
+  globalIdempotencyCache.set(key, { response, expiresAt: Date.now() + ttlMs });
 }
 
-function pruneIdempotency(state: IdempotencyState): void {
+function pruneIdempotency(): void {
   const now = Date.now();
-  for (const [cacheKey, entry] of state.idempotencyCache.entries()) {
-    if (entry.expiresAt <= now) state.idempotencyCache.delete(cacheKey);
+  for (const [cacheKey, entry] of globalIdempotencyCache.entries()) {
+    if (entry.expiresAt <= now) globalIdempotencyCache.delete(cacheKey);
   }
+}
+
+/**
+ * Clear the entire idempotency cache (useful for tests)
+ */
+export function clearIdempotencyCache(): void {
+  globalIdempotencyCache.clear();
 }
