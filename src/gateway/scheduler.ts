@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import cron from 'node-cron';
+import { CronJob } from 'cron';
 import { CONFIG_DIR } from '../core/config.js';
 import { runChannelAgent } from './channels/runner.js';
 import { broadcastTelegramMessage } from './channels/telegram.js';
@@ -14,8 +14,14 @@ type AutomationConfig = {
   enabled?: boolean;
 };
 
-let activeJobs = new Map<string, cron.ScheduledTask>();
-let heartbeatJob: cron.ScheduledTask | undefined;
+type ActiveJobState = {
+  job: CronJob;
+  cronExp: string;
+  input: string;
+};
+
+let activeJobs = new Map<string, ActiveJobState>();
+let heartbeatJob: CronJob | undefined;
 
 export async function startScheduler() {
   await reloadAutomations();
@@ -28,8 +34,8 @@ export async function startScheduler() {
 }
 
 export async function stopScheduler() {
-  for (const job of activeJobs.values()) {
-    job.stop();
+  for (const state of activeJobs.values()) {
+    state.job.stop();
   }
   activeJobs.clear();
   if (heartbeatJob) {
@@ -42,7 +48,7 @@ function startHeartbeat() {
   if (heartbeatJob) return;
 
   // Run every 30 minutes
-  heartbeatJob = cron.schedule('*/30 * * * *', async () => {
+  heartbeatJob = new CronJob('*/30 * * * *', async () => {
     console.log(`[heartbeat] Triggering internal heartbeat`);
     try {
       const prompt = "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.";
@@ -66,6 +72,7 @@ function startHeartbeat() {
       console.error(`[heartbeat] Failed:`, error);
     }
   });
+  heartbeatJob.start();
 }
 
 async function reloadAutomations() {
@@ -105,9 +112,9 @@ async function reloadAutomations() {
   const currentIds = new Set(automations.map(a => a.id));
 
   // Stop jobs that were removed or disabled
-  for (const [id, job] of activeJobs.entries()) {
+  for (const [id, state] of activeJobs.entries()) {
     if (!currentIds.has(id)) {
-      job.stop();
+      state.job.stop();
       activeJobs.delete(id);
       console.log(`[scheduler] Stopped job: ${id}`);
     }
@@ -117,39 +124,46 @@ async function reloadAutomations() {
   for (const auto of automations) {
     if (auto.enabled === false) {
       if (activeJobs.has(auto.id)) {
-        activeJobs.get(auto.id)?.stop();
+        activeJobs.get(auto.id)?.job.stop();
         activeJobs.delete(auto.id);
         console.log(`[scheduler] Disabled job: ${auto.id}`);
       }
       continue;
     }
 
-    if (activeJobs.has(auto.id)) {
-      // For simplicity, we just stop and recreate to ensure cron expression is up to date
-      activeJobs.get(auto.id)?.stop();
+    const existing = activeJobs.get(auto.id);
+    if (existing) {
+      if (existing.cronExp === auto.cron && existing.input === auto.input) {
+        // No changes, skip
+        continue;
+      }
+      // Config changed, stop old job
+      existing.job.stop();
       activeJobs.delete(auto.id);
     }
 
-    if (!cron.validate(auto.cron)) {
+    let job: CronJob;
+    try {
+      job = new CronJob(auto.cron, async () => {
+        console.log(`[scheduler] Triggering job: ${auto.id}`);
+        try {
+          // We reuse the channel runner since it safely wraps the Agent execution logic
+          await runChannelAgent(auto.input, {
+            agentId: auto.agentId || 'main',
+            sessionId: `cron-${auto.id}`,
+          });
+          console.log(`[scheduler] Job completed: ${auto.id}`);
+        } catch (error: any) {
+          console.error(`[scheduler] Job failed: ${auto.id}`, error);
+        }
+      });
+    } catch (e: any) {
       console.error(`[scheduler] Invalid cron expression for job ${auto.id}: ${auto.cron}`);
       continue;
     }
 
-    const job = cron.schedule(auto.cron, async () => {
-      console.log(`[scheduler] Triggering job: ${auto.id}`);
-      try {
-        // We reuse the channel runner since it safely wraps the Agent execution logic
-        await runChannelAgent(auto.input, {
-          agentId: auto.agentId || 'main',
-          sessionId: `cron-${auto.id}`,
-        });
-        console.log(`[scheduler] Job completed: ${auto.id}`);
-      } catch (error: any) {
-        console.error(`[scheduler] Job failed: ${auto.id}`, error);
-      }
-    });
-
-    activeJobs.set(auto.id, job);
+    job.start();
+    activeJobs.set(auto.id, { job, cronExp: auto.cron, input: auto.input });
     console.log(`[scheduler] Scheduled job: ${auto.id} [${auto.cron}]`);
   }
 }
