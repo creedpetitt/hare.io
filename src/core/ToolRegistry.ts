@@ -47,7 +47,7 @@ export class ToolRegistry {
       this.registerDefaults();
     }
 
-    const profile = config?.profile || 'coding';
+    const profile = config?.profile || 'full';
     const allow = config?.allow || [];
     const deny = config?.deny || [];
 
