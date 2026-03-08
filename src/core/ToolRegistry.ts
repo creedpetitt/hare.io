@@ -4,6 +4,7 @@ import { WebFetchTool } from '../tools/web_fetch.js';
 import { WebSearchTool } from '../tools/web_search.js';
 import { SearchHistoryTool } from '../tools/search_history.js';
 import { SessionsSpawnTool, SessionsListTool } from '../tools/sessions.js';
+import { ExecTool } from '../tools/exec.js';
 
 export class ToolRegistry {
   private static tools = new Map<string, Tool<any>>();
@@ -39,6 +40,7 @@ export class ToolRegistry {
     this.register(new WebSearchTool());
     this.register(new SessionsSpawnTool());
     this.register(new SessionsListTool());
+    this.register(new ExecTool());
   }
 
   static getTools(config?: ToolConfig): Tool<any>[] {
