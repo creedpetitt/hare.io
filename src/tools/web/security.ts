@@ -53,7 +53,13 @@ function isPrivateIPv6(host: string): boolean {
 }
 
 function isPrivateHost(host: string): boolean {
-  const normalized = normalizeHost(host);
+  let normalized = normalizeHost(host);
+  
+  // Strip brackets for IPv6 URL notation (e.g., [::1] -> ::1)
+  if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    normalized = normalized.slice(1, -1);
+  }
+
   if (normalized === 'localhost') return true;
   if (normalized.endsWith('.localhost')) return true;
   if (normalized.endsWith('.local')) return true;

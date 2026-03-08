@@ -167,15 +167,20 @@ function parseFrontmatter(raw: string): { frontmatter: Frontmatter; body: string
   const block = match[1];
   const body = raw.slice(match[0].length);
   const frontmatter: Frontmatter = {};
-  for (const line of block.split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx === -1) continue;
-    const key = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+  
+  // Use a more robust regex for key-value pairs
+  const lines = block.split('\n');
+  for (const line of lines) {
+    const pairMatch = line.match(/^([a-z0-9_-]+)\s*:\s*(.*)$/i);
+    if (!pairMatch) continue;
+    
+    const key = pairMatch[1].toLowerCase();
+    const value = pairMatch[2].trim().replace(/^['"]|['"]$/g, '');
+    
     if (key === 'name') frontmatter.name = value;
-    if (key === 'description') frontmatter.description = value;
-    if (key === 'metadata') frontmatter.metadata = value;
-    if (key === 'always') frontmatter.always = value;
+    else if (key === 'description') frontmatter.description = value;
+    else if (key === 'metadata') frontmatter.metadata = value;
+    else if (key === 'always') frontmatter.always = value;
   }
   return { frontmatter, body };
 }

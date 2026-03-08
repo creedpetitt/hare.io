@@ -4,7 +4,7 @@ import type { ToolResult } from '../core/types.js';
 import { fetchUrl } from './web/fetch.js';
 import { extractReadableContent } from './web/readability.js';
 import type { WebFetchInput, WebFetchOutput } from './web/types.js';
-import { SimpleTTLCache, normalizeCacheKey } from './web/cache.js';
+import { PersistentCache, normalizeCacheKey } from './web/cache.js';
 
 const WebFetchSchema = z.object({
   url: z.string().describe('Absolute URL to fetch.'),
@@ -18,13 +18,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_CHARS = 10_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_MAX_BYTES = 2_000_000;
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_MAX_ENTRIES = 100;
 
-const cache = new SimpleTTLCache<WebFetchOutput>({
-  ttlMs: CACHE_TTL_MS,
-  maxEntries: CACHE_MAX_ENTRIES,
-});
+const cache = new PersistentCache<WebFetchOutput>();
 
 export class WebFetchTool extends BaseTool<typeof WebFetchSchema> {
   name = 'web_fetch';
@@ -32,23 +27,21 @@ export class WebFetchTool extends BaseTool<typeof WebFetchSchema> {
   schema = WebFetchSchema;
 
   async execute(args: z.infer<typeof WebFetchSchema>): Promise<ToolResult> {
-    const input = args as WebFetchInput;
-
     try {
-      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-      const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
-      const maxRedirects = input.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-      const extractMode = input.extractMode ?? 'markdown';
+      const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const maxChars = args.maxChars ?? DEFAULT_MAX_CHARS;
+      const maxRedirects = args.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+      const extractMode = args.extractMode ?? 'markdown';
 
       const cacheKey = normalizeCacheKey(
-        JSON.stringify({ url: input.url, extractMode, maxChars })
+        JSON.stringify({ url: args.url, extractMode, maxChars })
       );
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return this.success(JSON.stringify(cached));
       }
 
-      const fetched = await fetchUrl(input.url, {
+      const fetched = await fetchUrl(args.url, {
         timeoutMs,
         maxRedirects,
         maxBytes: DEFAULT_MAX_BYTES,
@@ -70,7 +63,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchSchema> {
         contentType: fetched.contentType,
       };
 
-      cache.set(cacheKey, output);
+      await cache.set(cacheKey, output);
 
       return this.success(JSON.stringify(output));
     } catch (error: any) {

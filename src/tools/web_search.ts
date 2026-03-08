@@ -3,7 +3,7 @@ import { BaseTool } from './BaseTool.js';
 import type { ToolResult } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
 import type { WebSearchInput, WebSearchOutput, WebSearchResult } from './web/types.js';
-import { SimpleTTLCache, normalizeCacheKey } from './web/cache.js';
+import { PersistentCache, normalizeCacheKey } from './web/cache.js';
 
 const WebSearchSchema = z.object({
   query: z.string().min(1).describe('Search query.'),
@@ -16,14 +16,8 @@ const WebSearchSchema = z.object({
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESULTS = 5;
 const DEFAULT_MAX_RESULTS_CAP = 20;
-const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
-const CACHE_MAX_ENTRIES = 100;
 
-let cache = new SimpleTTLCache<WebSearchOutput>({
-  ttlMs: DEFAULT_CACHE_TTL_MS,
-  maxEntries: CACHE_MAX_ENTRIES,
-});
-let cacheTtlMs = DEFAULT_CACHE_TTL_MS;
+const cache = new PersistentCache<WebSearchOutput>();
 
 export class WebSearchTool extends BaseTool<typeof WebSearchSchema> {
   name = 'web_search';
@@ -31,8 +25,6 @@ export class WebSearchTool extends BaseTool<typeof WebSearchSchema> {
   schema = WebSearchSchema;
 
   async execute(args: z.infer<typeof WebSearchSchema>): Promise<ToolResult> {
-    const input = args as WebSearchInput;
-
     try {
       const config = await loadConfig();
       const provider = config.tools?.web?.search?.provider ?? 'brave';
@@ -50,41 +42,33 @@ export class WebSearchTool extends BaseTool<typeof WebSearchSchema> {
       }
 
       const timeoutMs =
-        input.timeoutMs ?? config.tools?.web?.search?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        args.timeoutMs ?? config.tools?.web?.search?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const maxResultsCap =
         config.tools?.web?.search?.maxResultsCap ?? DEFAULT_MAX_RESULTS_CAP;
       const maxResults = Math.min(
-        input.maxResults ?? config.tools?.web?.search?.maxResults ?? DEFAULT_MAX_RESULTS,
+        args.maxResults ?? config.tools?.web?.search?.maxResults ?? DEFAULT_MAX_RESULTS,
         maxResultsCap
       );
-      const country = input.country ?? config.tools?.web?.search?.country;
-      const searchLang = input.searchLang ?? config.tools?.web?.search?.searchLang;
-      const configuredTtl = config.tools?.web?.search?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
-      if (configuredTtl !== cacheTtlMs) {
-        cacheTtlMs = configuredTtl;
-        cache = new SimpleTTLCache<WebSearchOutput>({
-          ttlMs: cacheTtlMs,
-          maxEntries: CACHE_MAX_ENTRIES,
-        });
-      }
+      const country = args.country ?? config.tools?.web?.search?.country;
+      const searchLang = args.searchLang ?? config.tools?.web?.search?.searchLang;
 
       const cacheKey = normalizeCacheKey(
-        JSON.stringify({ query: input.query, maxResults, country, searchLang })
+        JSON.stringify({ query: args.query, maxResults, country, searchLang })
       );
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return this.success(JSON.stringify(cached));
       }
 
       const output = await runBraveSearch(
-        input.query,
+        args.query,
         maxResults,
         apiKey,
         timeoutMs,
         country,
         searchLang
       );
-      cache.set(cacheKey, output);
+      await cache.set(cacheKey, output);
       return this.success(JSON.stringify(output));
     } catch (error: any) {
       const code = error?.code || 'search_failed';

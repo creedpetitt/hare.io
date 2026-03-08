@@ -7,9 +7,22 @@ import path from 'path';
 function resolveSafePath(userPath: string, workspacePath: string): string {
   if (!workspacePath) throw new Error('Critical: Workspace path is not configured.');
 
+  // Block null bytes and other malicious characters
+  if (userPath.includes('\0')) {
+    throw new Error(`Security Alert: Null bytes detected in path.`);
+  }
+
+  // Block home directory shortcuts, drive letters, and backslashes
+  if (userPath.startsWith('~') || /^[a-zA-Z]:\\/.test(userPath) || userPath.includes('\\')) {
+    throw new Error(`Security Alert: Absolute, home-relative, or backslash-escaped paths are forbidden.`);
+  }
+
   const resolved = path.resolve(workspacePath, userPath);
+  
+  // path.resolve might return an absolute path if userPath is absolute
+  // We must ensure the final path is still within the workspace
   if (!resolved.startsWith(workspacePath)) {
-    throw new Error(`Security Alert: Access denied for path "${userPath}".`);
+    throw new Error(`Security Alert: Access denied for path "${userPath}". Path must stay within the workspace.`);
   }
   return resolved;
 }

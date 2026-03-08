@@ -87,6 +87,9 @@ export class GeminiProvider implements LLMProvider {
         }))
       : undefined;
 
+    // Detect if any tools are explicitly forced (e.g. via skill activation)
+    // We look at the last user message for any /skill hints or we check if 
+    // the system prompt indicates a specific skill is active.
     const forcedToolNames = hasToolSupport ? this.detectForcedTools(history, tools!) : [];
 
     const seededContents =
@@ -94,19 +97,28 @@ export class GeminiProvider implements LLMProvider {
         ? [{ role: 'user', parts: [{ text: systemPrompt }] }, ...contents]
         : contents;
 
+    let toolConfig: any = undefined;
+    if (functionDeclarations?.length) {
+      if (forcedToolNames.length > 0) {
+        toolConfig = {
+          functionCallingConfig: {
+            mode: FunctionCallingMode.ANY,
+            allowedFunctionNames: forcedToolNames,
+          },
+        };
+      } else {
+        toolConfig = {
+          functionCallingConfig: {
+            mode: FunctionCallingMode.AUTO,
+          },
+        };
+      }
+    }
+
     return {
       contents: seededContents,
       tools: functionDeclarations?.length ? [{ functionDeclarations }] : undefined,
-      toolConfig: functionDeclarations?.length
-        ? forcedToolNames.length
-          ? {
-              functionCallingConfig: {
-                mode: FunctionCallingMode.ANY,
-                allowedFunctionNames: forcedToolNames,
-              },
-            }
-          : { functionCallingConfig: { mode: FunctionCallingMode.AUTO } }
-        : undefined,
+      toolConfig,
     };
   }
 
