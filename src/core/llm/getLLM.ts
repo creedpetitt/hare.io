@@ -13,6 +13,8 @@ import { LLMProvider } from './LLMProvider.js';
 export type GetLLMOptions = {
   errorCode?: string;
   errorMessage?: string;
+  providerId?: ProviderId;
+  model?: string;
 };
 
 function defaultModelForProvider(provider: ProviderId): string {
@@ -31,6 +33,19 @@ export async function getConfiguredLLM(
   options: GetLLMOptions = {}
 ): Promise<{ llm: LLMProvider; model: string }> {
   const config = await loadConfig();
+
+  // If a specific provider and model is requested via options
+  if (options.providerId) {
+    const providerConfig = config.providers?.[options.providerId];
+    if (!providerConfig?.apiKey) {
+      const error: any = new Error(`Requested provider "${options.providerId}" is missing an API key.`);
+      error.code = options.errorCode || 'missing_api_key';
+      throw error;
+    }
+    const model = options.model || providerConfig.model || defaultModelForProvider(options.providerId);
+    const llm = buildProvider(options.providerId, providerConfig.apiKey, model, providerConfig.apiVersion);
+    return { llm, model };
+  }
 
   const preferred = config.defaults?.provider;
   if (preferred) {

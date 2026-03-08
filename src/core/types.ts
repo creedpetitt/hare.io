@@ -29,6 +29,7 @@ export interface BootstrapFiles {
   identity: string;
   user: string;
   heartbeat: string;
+  bootstrap?: string;
 }
 
 export interface SkillDefinition {

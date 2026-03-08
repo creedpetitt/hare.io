@@ -28,9 +28,16 @@ export async function startTelegramChannel(): Promise<void> {
     {
       onMessage: async (msg) => {
         try {
+          // Identify if this is a DM or a Group chat based on chatId
+          // Telegram group chat IDs are usually negative numbers
+          const isGroup = msg.chatId.startsWith('-');
+          const chatType = isGroup ? 'group' : 'direct';
+
           return await runChannelAgent(msg.text, {
-            agentId: 'main',
             sessionId: `telegram:${msg.chatId}`,
+            channel: 'telegram',
+            chatType,
+            peerId: msg.chatId,
           });
         } catch (error: any) {
           const code = error?.code ? ` (${error.code})` : '';
