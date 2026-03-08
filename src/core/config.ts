@@ -11,11 +11,27 @@ export type ProviderConfig = {
   apiVersion?: string;
 };
 
+export type AgentConfig = {
+  id: string;
+  name?: string;
+  workspace?: string;
+  model?: string;
+  profile?: string;
+};
+
+export type BindingConfig = {
+  agentId: string;
+  channel: 'telegram' | 'discord' | string;
+  chatType?: 'direct' | 'group';
+  peerId?: string;
+};
+
 export type AppConfig = {
   gateway?: {
     token?: string;
     port?: number;
   };
+  bindings?: BindingConfig[];
   tools?: {
     policy?: ToolPolicyConfig;
     web?: {
@@ -46,6 +62,7 @@ export type AppConfig = {
     };
   };
   agents?: {
+    list?: AgentConfig[];
     defaults?: {
       bootstrapMaxChars?: number;
       maxToolIterations?: number;
@@ -82,6 +99,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
   const channelsDiscord = channels.discord ?? {};
   return {
     gateway: { ...config.gateway },
+    bindings: config.bindings ? [...config.bindings] : [],
     tools: {
       ...tools,
       policy: tools.policy,
@@ -104,6 +122,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     defaults: { ...config.defaults },
     agents: {
       ...agents,
+      list: agents.list ? [...agents.list] : [],
       defaults: {
         ...agentDefaults,
         skills: { ...agentSkills },

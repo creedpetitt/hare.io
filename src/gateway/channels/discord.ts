@@ -28,9 +28,17 @@ export async function startDiscordChannel(): Promise<void> {
     {
       onMessage: async (msg) => {
         try {
+          // Identify if this is a DM or a Group chat based on chatId structure or msg metadata.
+          // Discord user IDs are numeric strings. We can assume if it has no special characters, it's a DM (user).
+          // For now, we'll pass the chatId as peerId and let config match it.
+          const isGroup = msg.chatId.includes('-'); // Rough heuristic, or maybe discord channel IDs are just strings.
+          const chatType = isGroup ? 'group' : 'direct';
+
           return await runChannelAgent(msg.text, {
-            agentId: 'main',
             sessionId: `discord:${msg.chatId}`,
+            channel: 'discord',
+            chatType,
+            peerId: msg.chatId,
           });
         } catch (error: any) {
           const code = error?.code ? ` (${error.code})` : '';

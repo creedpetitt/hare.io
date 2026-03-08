@@ -358,7 +358,17 @@ export class Agent {
       }
     }
 
-    const parts = [
+    const parts = [];
+
+    if (context.files.bootstrap) {
+      parts.push(
+        '=== FIRST-RUN RITUAL (BOOTSTRAP) ===',
+        context.files.bootstrap,
+        ''
+      );
+    }
+
+    parts.push(
       '=== IDENTITY ===',
       context.files.identity,
       '',
@@ -401,7 +411,7 @@ export class Agent {
       '',
       '=== AVAILABLE TOOLS ===',
       toolsPrompt,
-    ];
+    );
 
     return parts.join('\n').trim();
   }
