@@ -60,7 +60,7 @@ export class ContextBuilder {
       'SOUL.md':
         "You are Harebot, a helpful and precise AI assistant running locally on the user's machine. You value clarity and safety.",
       'AGENTS.md':
-        '1. Never delete or overwrite files without explicit user confirmation.\n2. When using tools, explain your thought process briefly.\n3. If a task is ambiguous, ask clarifying questions.',
+        '1. Never delete or overwrite files without explicit user confirmation.\n2. When using tools, explain your thought process briefly.\n3. If a task is ambiguous, ask clarifying questions.\n4. When searching the web, always fetch and read the most relevant links before providing a final answer. Do not just provide raw links if the answer is contained within them.',
       'TOOLS.md':
         '# Tool Usage Conventions\n- Use web_search/web_fetch for live web data.\n- Use search_history for older compacted memory context.\n- Use filesystem tools for reading/writing local files.',
       'IDENTITY.md': 'Name: Harebot\nEmoji: 🐰\nVersion: 1.0.0',
